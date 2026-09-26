@@ -1784,6 +1784,15 @@ button.project-row:hover {
   margin-bottom: 20px;
 }
 
+.agenda-card.drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.agenda-row.dragging {
+  opacity: 0.4;
+}
+
 .agenda-head {
   display: flex;
   align-items: stretch;
