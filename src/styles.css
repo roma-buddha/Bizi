@@ -1985,6 +1985,15 @@ button.project-row:hover {
   color: var(--accent);
 }
 
+/* Unfulfilled bucket: tasks from before the view that were never done. */
+.agenda-unfulfilled .agenda-weekday {
+  color: var(--hard);
+}
+
+.agenda-unfulfilled {
+  border-color: var(--border-strong);
+}
+
 .timeline {
   border-left: 2px solid var(--border);
   margin-left: 6px;

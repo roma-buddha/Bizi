@@ -59,7 +59,8 @@ function readPayload(e: DragEvent): DragPayload | null {
   }
 }
 
-/** The days to show for a view mode. Month shows the full calendar month. */
+/** The days to show for a view mode. Month shows the full calendar month;
+ *  Week starts on Monday of the current week. */
 function daysFor(mode: ViewMode, today: string): string[] {
   const [y, m] = today.split("-");
   let start = today;
@@ -67,7 +68,10 @@ function daysFor(mode: ViewMode, today: string): string[] {
   if (mode === "day") {
     end = today;
   } else if (mode === "week") {
-    end = addDaysISO(today, 6);
+    const d = new Date(today + "T00:00:00");
+    const sinceMonday = (d.getDay() + 6) % 7; // Monday = 0
+    start = addDaysISO(today, -sinceMonday);
+    end = addDaysISO(start, 6);
   } else if (mode === "month") {
     const last = new Date(Number(y), Number(m), 0).getDate();
     start = `${y}-${m}-01`;
@@ -133,12 +137,41 @@ export function PlannerPage() {
   };
 
   const days = daysFor(view, todayISO());
+  const firstDay = days[0];
+
+  // Tasks assigned to days before this view that were never marked done.
+  const unfulfilled = Object.entries(byDay)
+    .filter(([date]) => date < firstDay)
+    .flatMap(([dateISO, tasks]) => tasks.filter((t) => !t.done).map((task) => ({ task, dateISO })))
+    .sort((a, b) => a.dateISO.localeCompare(b.dateISO));
 
   return (
     <div className="page">
       <div className="planner-toolbar">
         <ViewMenu value={view} onChange={changeView} />
       </div>
+      {unfulfilled.length > 0 ? (
+        <section className="agenda-card agenda-unfulfilled" aria-label="Unfulfilled tasks">
+          <div className="agenda-head">
+            <span className="agenda-weekday">Unfulfilled</span>
+            <span className="agenda-date">before {numericDate(firstDay)}</span>
+          </div>
+          <div className="agenda-body">
+            <div className="agenda-rows">
+              {unfulfilled.map(({ task, dateISO }) => (
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  sourceDate={dateISO}
+                  onToggle={() => toggle(dateISO, task.id)}
+                  onDropBefore={(e) => e.preventDefault()}
+                  onDragOverRow={(e) => e.preventDefault()}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+      ) : null}
       {days.map((day) => (
         <DayCard key={day} dateISO={day} tasks={byDay[day] ?? []} onAdd={add} onToggle={toggle} onMove={move} />
       ))}
