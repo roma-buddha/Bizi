@@ -17,6 +17,7 @@ const VIEW_MODES = [
   { id: "week", label: "Week" },
   { id: "month", label: "Month" },
   { id: "year", label: "Year" },
+  { id: "twoYears", label: "2 Years" },
 ] as const;
 
 type ViewMode = (typeof VIEW_MODES)[number]["id"];
@@ -58,22 +59,26 @@ function readPayload(e: DragEvent): DragPayload | null {
   }
 }
 
-/** The days to show for a view mode, always starting at today. */
+/** The days to show for a view mode. Month shows the full calendar month. */
 function daysFor(mode: ViewMode, today: string): string[] {
+  const [y, m] = today.split("-");
+  let start = today;
   let end: string;
   if (mode === "day") {
     end = today;
   } else if (mode === "week") {
     end = addDaysISO(today, 6);
   } else if (mode === "month") {
-    const [y, m] = today.split("-");
     const last = new Date(Number(y), Number(m), 0).getDate();
+    start = `${y}-${m}-01`;
     end = `${y}-${m}-${String(last).padStart(2, "0")}`;
+  } else if (mode === "year") {
+    end = `${y}-12-31`;
   } else {
-    end = `${today.slice(0, 4)}-12-31`;
+    end = addDaysISO(today, 730);
   }
   const out: string[] = [];
-  for (let cursor = today; cursor <= end; cursor = addDaysISO(cursor, 1)) {
+  for (let cursor = start; cursor <= end; cursor = addDaysISO(cursor, 1)) {
     out.push(cursor);
   }
   return out;
