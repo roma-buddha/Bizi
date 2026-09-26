@@ -18,7 +18,16 @@ interface Store {
   toggleSidebar: () => void;
   sidebarWidth: number;
   setSidebarWidth: (width: number) => void;
+  section: Section;
+  setSection: (section: Section) => void;
 }
+
+/** Sidebar tabs, added back function by function. */
+export type Section = "today";
+
+export const SECTION_LABELS: Record<Section, string> = {
+  today: "Today",
+};
 
 const StoreContext = createContext<Store | null>(null);
 
@@ -40,6 +49,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     Math.min(480, Math.max(220, Number(localStorage.getItem("bizi.sidebar-width")) || 272)),
   );
+  const [section, setSection] = useState<Section>("today");
 
   const setTheme = useCallback((next: ThemeSetting) => {
     setThemeState(next);
@@ -96,8 +106,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       toggleSidebar,
       sidebarWidth,
       setSidebarWidth,
+      section,
+      setSection,
     }),
-    [theme, setTheme, toggleTheme, sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth],
+    [theme, setTheme, toggleTheme, sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth, section, setSection],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

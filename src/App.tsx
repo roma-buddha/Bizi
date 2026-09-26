@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
+import { PlannerPage } from "./features/Planner";
 import { useStore } from "./state/store";
 
 export default function App() {
-  const { sidebarWidth } = useStore();
+  const { section, sidebarWidth } = useStore();
 
   useEffect(() => {
     document.title = "Bizi";
@@ -15,7 +16,7 @@ export default function App() {
       <TopBar />
       <div className="app-body">
         <Sidebar />
-        <main className="main" />
+        <main className="main">{section === "today" ? <PlannerPage /> : null}</main>
       </div>
     </div>
   );

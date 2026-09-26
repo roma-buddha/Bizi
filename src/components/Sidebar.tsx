@@ -1,8 +1,11 @@
-import { useStore } from "../state/store";
+import { Sun } from "lucide-react";
+import { SECTION_LABELS, useStore, type Section } from "../state/store";
 
-/** Bare sidebar panel: navigation items are added back function by function. */
+const NAV_ITEMS: Section[] = ["today"];
+
+/** Sidebar panel: tabs are added back function by function. */
 export function Sidebar() {
-  const { sidebarCollapsed, sidebarWidth, setSidebarWidth } = useStore();
+  const { section, setSection, sidebarCollapsed, sidebarWidth, setSidebarWidth } = useStore();
 
   return (
     <nav className={`sidebar${sidebarCollapsed ? " collapsed" : ""}`} aria-label="Main navigation">
@@ -33,6 +36,26 @@ export function Sidebar() {
           }}
         />
       )}
+      <div className="nav-group">
+        {NAV_ITEMS.map((id) => {
+          const label = SECTION_LABELS[id];
+          const active = section === id;
+          return (
+            <button
+              key={id}
+              className={`nav-item${active ? " active" : ""}`}
+              onClick={() => setSection(id)}
+              title={sidebarCollapsed ? label : undefined}
+              aria-current={active ? "page" : undefined}
+            >
+              <span className="nav-icon">
+                <Sun size={16} />
+              </span>
+              {!sidebarCollapsed && <span className="nav-label">{label}</span>}
+            </button>
+          );
+        })}
+      </div>
     </nav>
   );
 }
