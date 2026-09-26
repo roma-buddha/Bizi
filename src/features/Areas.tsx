@@ -1,4 +1,10 @@
 import { useState } from "react";
+import {
+  BucketDensityToggle,
+  GoalBuckets,
+  ProjectBuckets,
+  useBucketCols,
+} from "../components/Buckets";
 import { api } from "../db";
 import { AREA_COLORS, AREA_ICONS } from "../models/types";
 import { useQuery, useStore } from "../state/store";
@@ -105,6 +111,8 @@ export function AreasPage() {
 export function AreaDetailPage({ id }: { id: string }) {
   const { navigate, bumpData } = useStore();
   const [tab, setTab] = useState("overview");
+  const [goalCols, setGoalCols] = useBucketCols("bizi.bucket-cols.goals");
+  const [projectCols, setProjectCols] = useBucketCols("bizi.bucket-cols.projects");
   const { data: area } = useQuery(() => api.area.list().then((list) => list.find((a) => a.id === id) ?? null), [id]);
   const { data: goals } = useQuery(() => api.goal.list(), [id]);
   const { data: projects } = useQuery(() => api.project.list({}), [id]);
@@ -218,25 +226,29 @@ export function AreaDetailPage({ id }: { id: string }) {
       ) : null}
 
       {tab === "goals" ? (
-        <div className="link-list">
-          {areaGoals.length === 0 ? <p className="muted">No goals in this area yet.</p> : null}
-          {areaGoals.map((g) => (
-            <button key={g.id} className="link-row" onClick={() => navigate({ kind: "goal", id: g.id })}>
-              {g.title}
-            </button>
-          ))}
-        </div>
+        areaGoals.length === 0 ? (
+          <p className="muted">No goals in this area yet.</p>
+        ) : (
+          <>
+            <div className="bucket-toolbar">
+              <BucketDensityToggle value={goalCols} onChange={setGoalCols} />
+            </div>
+            <GoalBuckets goals={areaGoals} projects={projects ?? []} tasks={tasks ?? []} cols={goalCols} />
+          </>
+        )
       ) : null}
 
       {tab === "projects" ? (
-        <div className="link-list">
-          {areaProjects.length === 0 ? <p className="muted">No projects in this area yet.</p> : null}
-          {areaProjects.map((p) => (
-            <button key={p.id} className="link-row" onClick={() => navigate({ kind: "project", id: p.id })}>
-              {p.title}
-            </button>
-          ))}
-        </div>
+        areaProjects.length === 0 ? (
+          <p className="muted">No projects in this area yet.</p>
+        ) : (
+          <>
+            <div className="bucket-toolbar">
+              <BucketDensityToggle value={projectCols} onChange={setProjectCols} />
+            </div>
+            <ProjectBuckets projects={areaProjects} tasks={tasks ?? []} cols={projectCols} />
+          </>
+        )
       ) : null}
 
       {tab === "tasks" ? (

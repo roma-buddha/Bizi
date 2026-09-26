@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { BucketDensityToggle, ProjectBuckets, useBucketCols } from "../components/Buckets";
+import { ProjectsGantt } from "../components/Gantt";
 import { api } from "../db";
 import type {
   LifeArea,
@@ -32,7 +34,8 @@ import {
 
 export function ProjectsPage() {
   const { navigate, bumpData } = useStore();
-  const [view, setView] = useState<"list" | "board">("list");
+  const [view, setView] = useState<"list" | "board" | "buckets" | "gantt">("buckets");
+  const [bucketCols, setBucketCols] = useBucketCols("bizi.bucket-cols.projects");
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | "all">("all");
   const [areaFilter, setAreaFilter] = useState("");
   const [creating, setCreating] = useState(false);
@@ -62,13 +65,20 @@ export function ProjectsPage() {
         </div>
         <div className="header-actions">
           <div className="chip-group">
+            <button className={`chip${view === "buckets" ? " active" : ""}`} onClick={() => setView("buckets")}>
+              Buckets
+            </button>
             <button className={`chip${view === "list" ? " active" : ""}`} onClick={() => setView("list")}>
               List
             </button>
             <button className={`chip${view === "board" ? " active" : ""}`} onClick={() => setView("board")}>
               Board
             </button>
+            <button className={`chip${view === "gantt" ? " active" : ""}`} onClick={() => setView("gantt")}>
+              Gantt
+            </button>
           </div>
+          {view === "buckets" ? <BucketDensityToggle value={bucketCols} onChange={setBucketCols} /> : null}
           <button className="button primary" onClick={() => setCreating(true)}>
             New project
           </button>
@@ -107,6 +117,10 @@ export function ProjectsPage() {
             </button>
           }
         />
+      ) : view === "buckets" ? (
+        <ProjectBuckets projects={filtered} tasks={tasks ?? []} cols={bucketCols} />
+      ) : view === "gantt" ? (
+        <ProjectsGantt projects={filtered} areas={areas ?? []} />
       ) : view === "list" ? (
         <div className="project-table">
           <div className="project-row project-row-head">

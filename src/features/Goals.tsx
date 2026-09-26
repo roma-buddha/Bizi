@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { BucketDensityToggle, GoalBuckets, useBucketCols } from "../components/Buckets";
 import { api } from "../db";
 import type { Goal, GoalStatus, LifeArea, Priority } from "../models/types";
 import {
@@ -26,6 +27,8 @@ import {
 
 export function GoalsPage() {
   const { navigate, bumpData } = useStore();
+  const [view, setView] = useState<"buckets" | "list">("buckets");
+  const [bucketCols, setBucketCols] = useBucketCols("bizi.bucket-cols.goals");
   const [statusFilter, setStatusFilter] = useState<GoalStatus | "all">("all");
   const [creating, setCreating] = useState(false);
   const { data: goals } = useQuery(() => api.goal.list(), []);
@@ -50,9 +53,20 @@ export function GoalsPage() {
           <h1>Goals</h1>
           <p className="page-subtitle">Desired outcomes across your life.</p>
         </div>
-        <button className="button primary" onClick={() => setCreating(true)}>
-          New goal
-        </button>
+        <div className="header-actions">
+          <div className="chip-group">
+            <button className={`chip${view === "buckets" ? " active" : ""}`} onClick={() => setView("buckets")}>
+              Buckets
+            </button>
+            <button className={`chip${view === "list" ? " active" : ""}`} onClick={() => setView("list")}>
+              List
+            </button>
+          </div>
+          {view === "buckets" ? <BucketDensityToggle value={bucketCols} onChange={setBucketCols} /> : null}
+          <button className="button primary" onClick={() => setCreating(true)}>
+            New goal
+          </button>
+        </div>
       </header>
 
       <div className="filter-bar">
@@ -82,6 +96,8 @@ export function GoalsPage() {
             </button>
           }
         />
+      ) : view === "buckets" ? (
+        <GoalBuckets goals={filtered} projects={projects ?? []} tasks={tasks ?? []} cols={bucketCols} />
       ) : (
         <div className="goal-list">
           {filtered.map((goal) => (

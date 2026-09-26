@@ -42,7 +42,7 @@ function NavButton({ entry, active }: { entry: NavEntry; active: boolean }) {
 }
 
 export function Sidebar() {
-  const { route, sidebarCollapsed } = useStore();
+  const { route, sidebarCollapsed, sidebarWidth, setSidebarWidth } = useStore();
   const { data: counts } = useQuery(() => api.task.counts(), []);
 
   const isActive = (kind: Route["kind"]) => route.kind === kind;
@@ -65,6 +65,33 @@ export function Sidebar() {
 
   return (
     <nav className={`sidebar${sidebarCollapsed ? " collapsed" : ""}`} aria-label="Main navigation">
+      {!sidebarCollapsed && (
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={220}
+          aria-valuemax={480}
+          aria-valuenow={sidebarWidth}
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            setSidebarWidth(sidebarWidth + (event.key === "ArrowRight" ? 12 : -12));
+          }}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            const move = (next: PointerEvent) => setSidebarWidth(next.clientX);
+            const stop = () => {
+              window.removeEventListener("pointermove", move);
+              window.removeEventListener("pointerup", stop);
+            };
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", stop);
+          }}
+        />
+      )}
       {!sidebarCollapsed && (
         <div className="nav-group">
           {main.map((entry) => (

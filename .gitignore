@@ -25,3 +25,6 @@ src-tauri/target
 *.sln
 *.sw?
 src-tauri/gen/
+
+# local reference material (not part of the app)
+_reference/

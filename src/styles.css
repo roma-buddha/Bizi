@@ -4,11 +4,11 @@
    ------------------------------------------------------------------ */
 
 :root {
-  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-ui: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   --font-display: Georgia, "Iowan Old Style", "Times New Roman", serif;
 
   --topbar-height: 44px;
-  --sidebar-width: 216px;
+  --sidebar-width: 272px;
   --sidebar-collapsed-width: 54px;
   --content-width: 880px;
   --radius: 6px;
@@ -24,49 +24,52 @@
   --area-orange: #bf704a;
 }
 
+/* Palette ported exactly from Lotus Notes (styles.css :root). */
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f5f1e8;
-  --bg-elevated: #fbf8f1;
-  --surface: #fffdf7;
-  --ink: #2c2620;
-  --ink-soft: #6f6759;
+  --bg: #f8f5ee; /* lotus --paper */
+  --bg-elevated: #f0ede6; /* lotus --sidebar */
+  --surface: #fffdf9; /* lotus --surface */
+  --ink: #302d29; /* lotus --ink */
+  --ink-soft: #6b645c; /* lotus --muted */
   --ink-faint: #a29885;
-  --border: #e3dcca;
-  --border-strong: #d2c9b4;
-  --accent: #a9611f;
-  --accent-soft: rgba(169, 97, 31, 0.12);
-  --accent-contrast: #fffdf7;
-  --danger: #a4443a;
-  --danger-soft: rgba(164, 68, 58, 0.1);
+  --border: #ded8ce; /* lotus --line */
+  --border-strong: #c9c2b4;
+  --accent: #7f463e; /* lotus --accent */
+  --accent-soft: #eee1d9; /* lotus --soft */
+  --accent-contrast: #fffdf9; /* lotus --on-accent */
+  --danger: #a1352c; /* lotus --danger */
+  --danger-soft: rgba(161, 53, 44, 0.1);
   --shadow: 0 10px 30px rgba(60, 48, 30, 0.16);
-  --hard: #a4443a;
+  --hard: #a1352c;
   --soft-badge: #8a6d3b;
-  --done: #5f8f5a;
-  --scrollbar: #cfc6b0;
+  --done: #526344; /* lotus --green */
+  --hover: #e8e2d8; /* lotus --hover */
+  --scrollbar: #c7c0b3;
   --drag-region: transparent;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #211d18;
-  --bg-elevated: #28231d;
-  --surface: #2e2821;
-  --ink: #ece5d6;
-  --ink-soft: #a79c89;
+  --bg: #181817; /* lotus --paper */
+  --bg-elevated: #141413; /* lotus --sidebar */
+  --surface: #20201e; /* lotus --surface */
+  --ink: #eee9e1; /* lotus --ink */
+  --ink-soft: #b3ada3; /* lotus --muted */
   --ink-faint: #7d7364;
-  --border: #3b342b;
-  --border-strong: #4c4439;
-  --accent: #d18d50;
-  --accent-soft: rgba(209, 141, 80, 0.16);
-  --accent-contrast: #2a2118;
-  --danger: #c96a5c;
-  --danger-soft: rgba(201, 106, 92, 0.14);
+  --border: #353430; /* lotus --line */
+  --border-strong: #45443f;
+  --accent: #dbab9f; /* lotus --accent */
+  --accent-soft: #3b2d28; /* lotus --soft */
+  --accent-contrast: #231b18; /* lotus --on-accent */
+  --danger: #efa59b; /* lotus --danger */
+  --danger-soft: rgba(239, 165, 155, 0.12);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-  --hard: #d98a7d;
+  --hard: #efa59b;
   --soft-badge: #c2a06a;
-  --done: #87ab82;
-  --scrollbar: #4c4439;
+  --done: #b1c497; /* lotus --green */
+  --hover: #2a2926; /* lotus --hover */
+  --scrollbar: #353430;
 }
 
 * {
@@ -348,6 +351,7 @@ kbd {
 /* ---------------- sidebar ---------------- */
 
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -358,6 +362,34 @@ kbd {
   border-right: 1px solid var(--border);
   overflow-y: auto;
   scrollbar-width: none;
+}
+
+/* Resizer, ported from Lotus Notes: 8px grab strip on the sidebar's
+   right edge; hover/focus reveals a 1px accent line. */
+.sidebar-resizer {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after {
+  background: var(--accent);
 }
 
 .sidebar.collapsed {
@@ -400,7 +432,7 @@ kbd {
 }
 
 .nav-item:hover {
-  background: var(--accent-soft);
+  background: var(--hover);
   color: var(--ink);
 }
 
@@ -1125,6 +1157,33 @@ textarea.field-input {
   font-size: 16px;
 }
 
+.detail-head {
+  position: sticky;
+  top: -18px;
+  z-index: 5;
+  padding: 4px 0 8px;
+  background: var(--bg-elevated);
+}
+
+.detail-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.detail-close:hover {
+  background: var(--hover);
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
 .detail-body {
   display: flex;
   flex-direction: column;
@@ -1421,6 +1480,420 @@ button.project-row:hover {
 .board-card-meta {
   font-size: 12px;
   color: var(--ink-faint);
+}
+
+/* ---------------- buckets (project / goal columns) ---------------- */
+
+.bucket-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--bucket-cols, 3), minmax(0, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.bucket {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+}
+
+.bucket-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+
+.bucket-head:hover .bucket-title {
+  text-decoration: underline;
+}
+
+.bucket-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.bucket-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 220px;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.bucket-body {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bucket-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+
+.bucket-row:hover {
+  background: var(--hover);
+}
+
+.bucket-row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bucket-empty {
+  margin: 2px 6px;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.bucket-add {
+  padding: 4px 6px 2px;
+}
+
+.bucket-add input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+}
+
+.bucket-add input:hover {
+  background: var(--hover);
+}
+
+.bucket-add input:focus {
+  background: var(--bg);
+  outline: 1px solid var(--border-strong);
+}
+
+.icon-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+}
+
+.bucket-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+/* ---------------- gantt ---------------- */
+
+.gantt {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.gantt-empty {
+  padding: 24px;
+}
+
+.gantt-names {
+  width: 210px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+}
+
+.gantt-head-spacer {
+  height: 33px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.gantt-name-row {
+  height: 38px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.gantt-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.gantt-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.gantt-name-meta {
+  font-size: 11px;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.gantt-undated-label {
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
+.gantt-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.gantt-chart {
+  position: relative;
+  min-width: 100%;
+}
+
+.gantt-months {
+  display: flex;
+  height: 33px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.gantt-month {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.gantt-rows {
+  position: relative;
+}
+
+.gantt-row {
+  position: relative;
+  height: 38px;
+  border-bottom: 1px solid var(--border);
+}
+
+.gantt-bar {
+  position: absolute;
+  top: 9px;
+  height: 20px;
+  border-radius: 10px;
+  overflow: hidden;
+  color: #fff;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  min-width: 24px;
+}
+
+.gantt-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgb(255 255 255 / 28%);
+}
+
+.gantt-bar-label {
+  position: relative;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.gantt-bar:hover {
+  filter: brightness(1.08);
+  outline: 1px solid var(--border-strong);
+}
+
+.gantt-undated {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.gantt-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gantt-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.gantt-today {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--danger);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+/* ---------------- today: paper-planner agenda cards ---------------- */
+
+.agenda-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.agenda-head {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+
+.agenda-weekday {
+  width: 180px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 9px 14px;
+  font-weight: 700;
+}
+
+.agenda-date {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--accent-soft);
+  padding: 9px 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.agenda-head-action {
+  margin: 0 auto;
+}
+
+.agenda-body {
+  padding: 16px 24px 14px;
+}
+
+.agenda-rows {
+  max-width: 620px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agenda-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 3px 8px;
+  border-radius: var(--radius-small);
+  min-height: 26px;
+}
+
+.agenda-row:hover {
+  background: var(--hover);
+}
+
+.agenda-title {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 13.5px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agenda-row.completed .agenda-title {
+  text-decoration: line-through;
+  color: var(--ink-faint);
+}
+
+.agenda-pill {
+  flex-shrink: 0;
+  width: 150px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agenda-add-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13.5px;
+  outline: none;
+  padding: 2px 0;
+}
+
+.agenda-add:hover {
+  background: var(--hover);
+}
+
+.agenda-checkbox-spacer {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.agenda-pill-empty {
+  appearance: none;
+  pointer-events: none;
 }
 
 .timeline {

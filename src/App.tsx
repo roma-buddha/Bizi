@@ -51,7 +51,7 @@ function RouteView({ route }: { route: ReturnType<typeof useStore>["route"] }) {
 }
 
 export default function App() {
-  const { route, setPaletteOpen, setQuickAddOpen, detailTaskId } = useStore();
+  const { route, setPaletteOpen, setQuickAddOpen, detailTaskId, sidebarWidth } = useStore();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -76,7 +76,7 @@ export default function App() {
   }, [setPaletteOpen, setQuickAddOpen]);
 
   return (
-    <div className="app">
+    <div className="app" style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
       <TopBar />
       <div className="app-body">
         <Sidebar />

@@ -33,6 +33,8 @@ interface Store {
   setTheme: (theme: ThemeSetting) => void;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
+  sidebarWidth: number;
+  setSidebarWidth: (width: number) => void;
   dataVersion: number;
   bumpData: () => void;
   detailTaskId: string | null;
@@ -61,6 +63,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem("bizi.sidebar") === "1",
+  );
+  // Same bounds and default as Lotus Notes: 220–480px, default 272px.
+  const [sidebarWidth, setSidebarWidthState] = useState(() =>
+    Math.min(480, Math.max(220, Number(localStorage.getItem("bizi.sidebar-width")) || 272)),
   );
   const [dataVersion, setDataVersion] = useState(0);
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
@@ -103,6 +109,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const setSidebarWidth = useCallback((width: number) => {
+    const clamped = Math.min(480, Math.max(220, Math.round(width)));
+    setSidebarWidthState(clamped);
+    try {
+      localStorage.setItem("bizi.sidebar-width", String(clamped));
+    } catch {
+      // storage unavailable
+    }
+  }, []);
+
   const bumpData = useCallback(() => setDataVersion((v) => v + 1), []);
 
   const value = useMemo<Store>(
@@ -113,6 +129,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setTheme,
       sidebarCollapsed,
       toggleSidebar,
+      sidebarWidth,
+      setSidebarWidth,
       dataVersion,
       bumpData,
       detailTaskId,
@@ -130,6 +148,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setTheme,
       sidebarCollapsed,
       toggleSidebar,
+      sidebarWidth,
+      setSidebarWidth,
       dataVersion,
       bumpData,
       detailTaskId,

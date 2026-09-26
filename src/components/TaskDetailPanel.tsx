@@ -1,59 +1,41 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { X } from "lucide-react";
 import { api } from "../db";
-import type {
-  Goal,
-  LifeArea,
-  Priority,
-  Project,
-  Task,
-  TaskPatch,
-  TaskStatus,
-} from "../models/types";
-import {
-  DEADLINE_LABELS,
-  DEADLINE_TYPES,
-  PRIORITIES,
-  PRIORITY_NAMES,
-  TASK_STATUSES,
-  TASK_STATUS_LABELS,
-} from "../models/types";
+import type { LifeArea, Priority, Project, TaskPatch, TaskStatus } from "../models/types";
+import { PRIORITIES, PRIORITY_NAMES, TASK_STATUSES, TASK_STATUS_LABELS } from "../models/types";
 import { useQuery, useStore } from "../state/store";
-import { formatMinutes } from "../utils/calc";
 import { formatDate, todayISO } from "../utils/date";
 import { DateField, SelectField, TextField } from "./ui";
-import { NoteEditor } from "./NoteEditor";
 
 export function TaskDetailPanel() {
   const { detailTaskId, closeTaskDetail, bumpData } = useStore();
-  const { data: task } = useQuery(() => (detailTaskId ? api.task.get(detailTaskId) : Promise.resolve(null)), [detailTaskId]);
-  const { data: areas } = useQuery(() => api.area.list(), []);
-  const { data: projects } = useQuery(() => api.project.list({}), []);
-  const { data: goals } = useQuery(() => api.goal.list(), []);
-  const { data: subtasks } = useQuery(
-    () => (detailTaskId ? api.task.list({ parentId: detailTaskId, excludeStatuses: [] }) : Promise.resolve([])),
+  const { data: task } = useQuery(
+    () => (detailTaskId ? api.task.get(detailTaskId) : Promise.resolve(null)),
     [detailTaskId],
   );
-  const [newSubtask, setNewSubtask] = useState("");
+  const { data: areas } = useQuery(() => api.area.list(), []);
+  const { data: projects } = useQuery(() => api.project.list({}), []);
 
-  useEffect(() => setNewSubtask(""), [detailTaskId]);
+  useEffect(() => {
+    if (!detailTaskId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target?.isContentEditable ?? false);
+      if (!typing) closeTaskDetail();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [detailTaskId, closeTaskDetail]);
 
   if (!detailTaskId) return null;
 
   const patch = async (p: TaskPatch) => {
     await api.task.update(detailTaskId, p);
-    bumpData();
-  };
-
-  const toggleGoal = async (goalId: string, linked: boolean) => {
-    const current = task?.goalIds ?? [];
-    await patch({ goalIds: linked ? [...current, goalId] : current.filter((g) => g !== goalId) });
-  };
-
-  const addSubtask = async () => {
-    const trimmed = newSubtask.trim();
-    if (!trimmed) return;
-    await api.task.create({ title: trimmed, parentTaskId: detailTaskId, status: "todo" });
-    setNewSubtask("");
     bumpData();
   };
 
@@ -75,8 +57,9 @@ export function TaskDetailPanel() {
     <aside className="detail-panel" aria-label="Task details">
       <div className="detail-head">
         <h3>Task</h3>
-        <button className="icon-button" onClick={closeTaskDetail} aria-label="Close details">
-          ×
+        <button className="detail-close" onClick={closeTaskDetail} aria-label="Close details" title="Close (Esc)">
+          <X size={15} aria-hidden />
+          <span>Close</span>
         </button>
       </div>
       {!task ? (
@@ -118,20 +101,6 @@ export function TaskDetailPanel() {
               ]}
             />
           </div>
-          <div className="field-label">Related goals</div>
-          <div className="goal-link-list">
-            {(goals ?? []).length === 0 ? <span className="field-hint">No goals yet</span> : null}
-            {(goals ?? []).map((g: Goal) => (
-              <label key={g.id} className="goal-link">
-                <input
-                  type="checkbox"
-                  checked={task.goalIds.includes(g.id)}
-                  onChange={(e) => void toggleGoal(g.id, e.target.checked)}
-                />
-                <span>{g.title}</span>
-              </label>
-            ))}
-          </div>
           <div className="field-grid">
             <DateField
               label="Scheduled (work on)"
@@ -140,70 +109,18 @@ export function TaskDetailPanel() {
             />
             <DateField label="Due (complete by)" value={task.dueDate} onChange={(v) => void patch({ dueDate: v })} />
           </div>
-          <SelectField
-            label="Deadline type"
-            value={task.deadlineType}
-            onChange={(v) => void patch({ deadlineType: v as Task["deadlineType"] })}
-            options={DEADLINE_TYPES.map((d) => ({ value: d, label: DEADLINE_LABELS[d] }))}
-          />
           <label className="field">
             <span className="field-label">Description</span>
             <textarea
               className="field-input textarea"
-              rows={3}
+              rows={4}
               value={task.description}
               onChange={(e) => void patch({ description: e.target.value })}
             />
           </label>
-          <div className="field-grid">
-            <TextField
-              label="Estimated (minutes)"
-              value={task.estimatedMinutes?.toString() ?? ""}
-              onChange={(v) => void patch({ estimatedMinutes: v ? Number(v) : null })}
-            />
-            <TextField
-              label="Actual (minutes)"
-              value={task.actualMinutes?.toString() ?? ""}
-              onChange={(v) => void patch({ actualMinutes: v ? Number(v) : null })}
-            />
-          </div>
-          <div className="subtasks">
-            <span className="field-label">Subtasks</span>
-            {subtasks?.map((s) => (
-              <div key={s.id} className="subtask-row">
-                <input
-                  type="checkbox"
-                  checked={s.status === "completed"}
-                  onChange={(e) => void api.task.setComplete(s.id, e.target.checked).then(bumpData)}
-                />
-                <span className={s.status === "completed" ? "subtask-done" : ""}>{s.title}</span>
-                <button
-                  className="icon-button small"
-                  aria-label="Delete subtask"
-                  onClick={() => void api.task.remove(s.id).then(bumpData)}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <div className="subtask-add">
-              <input
-                className="field-input"
-                placeholder="Add subtask…"
-                value={newSubtask}
-                onChange={(e) => setNewSubtask(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void addSubtask();
-                }}
-              />
-            </div>
-          </div>
-          <div className="field-label">Notes</div>
-          <NoteEditor entityType="task" entityId={task.id} />
           <div className="detail-meta">
             <span>Created {formatDate(task.createdAt.slice(0, 10))}</span>
             {task.completedAt ? <span>Completed {formatDate(task.completedAt.slice(0, 10))}</span> : null}
-            {task.estimatedMinutes != null ? <span>Estimate {formatMinutes(task.estimatedMinutes)}</span> : null}
             {task.scheduledDate === todayISO() ? <span>Scheduled today</span> : null}
           </div>
           <div className="detail-actions">
