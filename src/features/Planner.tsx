@@ -136,12 +136,14 @@ export function PlannerPage() {
     });
   };
 
-  const days = daysFor(view, todayISO());
-  const firstDay = days[0];
+  const today = todayISO();
+  const days = daysFor(view, today);
 
-  // Tasks assigned to days before this view that were never marked done.
+  // Tasks assigned to days before today that were never marked done;
+  // they are collected into the Unfulfilled bucket and hidden from
+  // their original (past) day cards, which keep only completed history.
   const unfulfilled = Object.entries(byDay)
-    .filter(([date]) => date < firstDay)
+    .filter(([date]) => date < today)
     .flatMap(([dateISO, tasks]) => tasks.filter((t) => !t.done).map((task) => ({ task, dateISO })))
     .sort((a, b) => a.dateISO.localeCompare(b.dateISO));
 
@@ -154,7 +156,9 @@ export function PlannerPage() {
         <section className="agenda-card agenda-unfulfilled" aria-label="Unfulfilled tasks">
           <div className="agenda-head">
             <span className="agenda-weekday">Unfulfilled</span>
-            <span className="agenda-date">before {numericDate(firstDay)}</span>
+            <span className="agenda-date">
+              {unfulfilled.length} task{unfulfilled.length === 1 ? "" : "s"} carried over
+            </span>
           </div>
           <div className="agenda-body">
             <div className="agenda-rows">
@@ -173,7 +177,15 @@ export function PlannerPage() {
         </section>
       ) : null}
       {days.map((day) => (
-        <DayCard key={day} dateISO={day} tasks={byDay[day] ?? []} onAdd={add} onToggle={toggle} onMove={move} />
+        <DayCard
+          key={day}
+          dateISO={day}
+          isPast={day < today}
+          tasks={byDay[day] ?? []}
+          onAdd={add}
+          onToggle={toggle}
+          onMove={move}
+        />
       ))}
     </div>
   );
@@ -238,12 +250,14 @@ function ViewMenu({ value, onChange }: { value: ViewMode; onChange: (mode: ViewM
 
 function DayCard({
   dateISO,
+  isPast,
   tasks,
   onAdd,
   onToggle,
   onMove,
 }: {
   dateISO: string;
+  isPast: boolean;
   tasks: DailyTask[];
   onAdd: (dateISO: string, title: string) => void;
   onToggle: (dateISO: string, id: string) => void;
@@ -274,6 +288,9 @@ function DayCard({
     onMove(payload.sourceDate, dateISO, payload.id, index);
   };
 
+  // Past days keep only completed history; open tasks moved to the bucket.
+  const visibleTasks = isPast ? tasks.filter((t) => t.done) : tasks;
+
   return (
     <section
       className={`agenda-card${dropActive ? " drop-target" : ""}`}
@@ -299,7 +316,7 @@ function DayCard({
       </div>
       <div className="agenda-body">
         <div className="agenda-rows">
-          {tasks.map((task, index) => (
+          {visibleTasks.map((task, index) => (
             <TaskRow
               key={task.id}
               task={task}
@@ -309,24 +326,26 @@ function DayCard({
               onDragOverRow={acceptDrop}
             />
           ))}
-          <div
-            className="agenda-row agenda-add"
-            onDragOver={acceptDrop}
-            onDrop={(e) => handleDrop(e, tasks.length)}
-          >
-            <span className="agenda-checkbox-spacer" aria-hidden />
-            <input
-              className="agenda-add-input"
-              placeholder="Add…"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
-              }}
-              onBlur={submit}
-              aria-label={`Add task to ${weekdayLabel(dateISO)}`}
-            />
-          </div>
+          {!isPast ? (
+            <div
+              className="agenda-row agenda-add"
+              onDragOver={acceptDrop}
+              onDrop={(e) => handleDrop(e, visibleTasks.length)}
+            >
+              <span className="agenda-checkbox-spacer" aria-hidden />
+              <input
+                className="agenda-add-input"
+                placeholder="Add…"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submit();
+                }}
+                onBlur={submit}
+                aria-label={`Add task to ${weekdayLabel(dateISO)}`}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
     </section>
