@@ -6,7 +6,8 @@
   "description": "A calm personal life organizer. Local-first Life OS for Windows.",
   "license": "MIT",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "vite",
+    "dev:desktop": "tauri dev",
     "dev:web": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "preview": "vite --host 127.0.0.1 --port 7100 --strictPort",
     "build": "tsc -b && vite build",
