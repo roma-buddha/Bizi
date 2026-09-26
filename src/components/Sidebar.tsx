@@ -2,7 +2,6 @@ import {
   Archive,
   CalendarDays,
   CircleCheck,
-  Flag,
   FolderKanban,
   Inbox,
   Layers,
@@ -11,57 +10,33 @@ import {
   Settings,
   Sun,
   Target,
+  type LucideIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
-import { api } from "../db";
-import { useQuery, useStore, type Route } from "../state/store";
+import { SECTIONS, useStore, type SectionId } from "../state/store";
 
-interface NavEntry {
-  route: Route;
-  label: string;
-  icon: ReactNode;
-  badge?: number;
-}
+const SECTION_ICONS: Record<SectionId, LucideIcon> = {
+  today: Sun,
+  inbox: Inbox,
+  areas: Layers,
+  goals: Target,
+  projects: FolderKanban,
+  todo: CircleCheck,
+  calendar: CalendarDays,
+  habits: Repeat,
+  reviews: Map,
+  archive: Archive,
+  settings: Settings,
+};
 
-function NavButton({ entry, active }: { entry: NavEntry; active: boolean }) {
-  const { navigate, sidebarCollapsed } = useStore();
-  return (
-    <button
-      className={`nav-item${active ? " active" : ""}`}
-      onClick={() => navigate(entry.route)}
-      title={sidebarCollapsed ? entry.label : undefined}
-      aria-current={active ? "page" : undefined}
-    >
-      <span className="nav-icon">{entry.icon}</span>
-      {!sidebarCollapsed && <span className="nav-label">{entry.label}</span>}
-      {!sidebarCollapsed && entry.badge != null && entry.badge > 0 ? (
-        <span className="nav-badge">{entry.badge}</span>
-      ) : null}
-    </button>
-  );
-}
+const NAV_GROUPS: SectionId[][] = [
+  ["today", "inbox"],
+  ["areas", "goals", "projects", "todo"],
+  ["calendar", "habits"],
+  ["reviews"],
+];
 
 export function Sidebar() {
-  const { route, sidebarCollapsed, sidebarWidth, setSidebarWidth } = useStore();
-  const { data: counts } = useQuery(() => api.task.counts(), []);
-
-  const isActive = (kind: Route["kind"]) => route.kind === kind;
-
-  const main: NavEntry[] = [
-    { route: { kind: "today" }, label: "Today", icon: <Sun size={16} />, badge: counts?.today },
-    { route: { kind: "inbox" }, label: "Inbox", icon: <Inbox size={16} />, badge: counts?.inbox },
-  ];
-  const planning: NavEntry[] = [
-    { route: { kind: "areas" }, label: "Areas", icon: <Layers size={16} /> },
-    { route: { kind: "goals" }, label: "Goals", icon: <Target size={16} /> },
-    { route: { kind: "projects" }, label: "Projects", icon: <FolderKanban size={16} /> },
-    { route: { kind: "todo" }, label: "To-Do", icon: <CircleCheck size={16} /> },
-  ];
-  const time: NavEntry[] = [
-    { route: { kind: "calendar" }, label: "Calendar", icon: <CalendarDays size={16} /> },
-    { route: { kind: "habits" }, label: "Habits", icon: <Repeat size={16} /> },
-  ];
-  const reflection: NavEntry[] = [{ route: { kind: "reviews" }, label: "Reviews", icon: <Map size={16} /> }];
+  const { section, setSection, sidebarCollapsed, sidebarWidth, setSidebarWidth } = useStore();
 
   return (
     <nav className={`sidebar${sidebarCollapsed ? " collapsed" : ""}`} aria-label="Main navigation">
@@ -92,42 +67,33 @@ export function Sidebar() {
           }}
         />
       )}
-      {!sidebarCollapsed && (
-        <div className="nav-group">
-          {main.map((entry) => (
-            <NavButton key={entry.label} entry={entry} active={isActive(entry.route.kind)} />
-          ))}
+      {NAV_GROUPS.map((group, i) => (
+        <div key={group.join("-")} className="nav-group">
+          {i > 0 && !sidebarCollapsed && <div className="nav-section" />}
+          {group.map((id) => {
+            const Icon = SECTION_ICONS[id];
+            const label = SECTIONS.find((s) => s.id === id)?.label ?? id;
+            const active = section === id;
+            return (
+              <button
+                key={id}
+                className={`nav-item${active ? " active" : ""}`}
+                onClick={() => setSection(id)}
+                title={sidebarCollapsed ? label : undefined}
+                aria-current={active ? "page" : undefined}
+              >
+                <span className="nav-icon">
+                  <Icon size={16} />
+                </span>
+                {!sidebarCollapsed && <span className="nav-label">{label}</span>}
+              </button>
+            );
+          })}
         </div>
-      )}
-      {sidebarCollapsed &&
-        main.map((entry) => <NavButton key={entry.label} entry={entry} active={isActive(entry.route.kind)} />)}
-
-      {!sidebarCollapsed && <div className="nav-section">Planning</div>}
-      {planning.map((entry) => (
-        <NavButton key={entry.label} entry={entry} active={isActive(entry.route.kind)} />
       ))}
-
-      {!sidebarCollapsed && <div className="nav-section">Time</div>}
-      {time.map((entry) => (
-        <NavButton key={entry.label} entry={entry} active={isActive(entry.route.kind)} />
-      ))}
-
-      {!sidebarCollapsed && <div className="nav-section">Reflection</div>}
-      {reflection.map((entry) => (
-        <NavButton key={entry.label} entry={entry} active={isActive(entry.route.kind)} />
-      ))}
-
       <div className="sidebar-spacer" />
-      <NavButton
-        entry={{ route: { kind: "archive" }, label: "Archive", icon: <Archive size={16} /> }}
-        active={isActive("archive")}
-      />
-      <NavButton
-        entry={{ route: { kind: "settings" }, label: "Settings", icon: <Settings size={16} /> }}
-        active={isActive("settings")}
-      />
       <div className="sidebar-foot">
-        <Flag size={12} aria-hidden />
+        <Sun size={12} aria-hidden />
         {!sidebarCollapsed && <span>One life, one system</span>}
       </div>
     </nav>

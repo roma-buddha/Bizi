@@ -1,11 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Moon, PanelLeft, Plus, Search, Sun } from "lucide-react";
+import { Moon, PanelLeft, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isTauriRuntime } from "../runtime";
 import { useStore } from "../state/store";
-import { isTauriRuntime } from "../db";
 
 export function TopBar() {
-  const { toggleSidebar, theme, setTheme, setPaletteOpen, setQuickAddOpen } = useStore();
+  const { toggleSidebar, theme, toggleTheme } = useStore();
   const [maximized, setMaximized] = useState(false);
   const tauri = isTauriRuntime();
 
@@ -21,10 +21,6 @@ export function TopBar() {
     };
   }, [tauri]);
 
-  const cycleTheme = () => {
-    setTheme(theme === "light" ? "dark" : theme === "dark" ? "system" : "light");
-  };
-
   return (
     <header className="topbar">
       <div className="topbar-drag" data-tauri-drag-region />
@@ -34,24 +30,12 @@ export function TopBar() {
       <span className="app-name">Bizi</span>
       <div className="topbar-spacer" data-tauri-drag-region />
       <button
-        className="search-trigger"
-        onClick={() => setPaletteOpen(true)}
-        title="Search and commands (Ctrl+K)"
+        className="icon-button"
+        onClick={toggleTheme}
+        aria-label="Theme"
+        title={`Theme: ${theme} (click to switch)`}
       >
-        <Search size={14} />
-        <span>Search</span>
-        <kbd>Ctrl K</kbd>
-      </button>
-      <button className="icon-button" onClick={cycleTheme} aria-label="Theme" title={`Theme: ${theme}`}>
-        {theme === "light" ? <Sun size={16} /> : theme === "dark" ? <Moon size={16} /> : <Sun size={16} className="dimmed" />}
-      </button>
-      <button
-        className="icon-button accent"
-        onClick={() => setQuickAddOpen(true)}
-        aria-label="Quick add task"
-        title="Quick add task (Ctrl+N)"
-      >
-        <Plus size={17} />
+        {theme === "light" ? <Sun size={16} /> : <Moon size={16} />}
       </button>
       {tauri ? (
         <div className="window-controls">

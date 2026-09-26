@@ -4,79 +4,62 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
-import type { ThemeSetting } from "../models/types";
 
-export type Route =
-  | { kind: "today" }
-  | { kind: "inbox" }
-  | { kind: "areas" }
-  | { kind: "area"; id: string }
-  | { kind: "goals" }
-  | { kind: "goal"; id: string }
-  | { kind: "projects" }
-  | { kind: "project"; id: string }
-  | { kind: "todo" }
-  | { kind: "calendar" }
-  | { kind: "habits" }
-  | { kind: "reviews" }
-  | { kind: "archive" }
-  | { kind: "settings" };
+export type ThemeSetting = "light" | "dark";
+
+/** Sidebar sections, in display order. Rebuilt function by function. */
+export const SECTIONS = [
+  { id: "today", label: "Today" },
+  { id: "inbox", label: "Inbox" },
+  { id: "areas", label: "Areas" },
+  { id: "goals", label: "Goals" },
+  { id: "projects", label: "Projects" },
+  { id: "todo", label: "To-Do" },
+  { id: "calendar", label: "Calendar" },
+  { id: "habits", label: "Habits" },
+  { id: "reviews", label: "Reviews" },
+  { id: "archive", label: "Archive" },
+  { id: "settings", label: "Settings" },
+] as const;
+
+export type SectionId = (typeof SECTIONS)[number]["id"];
 
 interface Store {
-  route: Route;
-  navigate: (route: Route) => void;
   theme: ThemeSetting;
   setTheme: (theme: ThemeSetting) => void;
+  toggleTheme: () => void;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
   sidebarWidth: number;
   setSidebarWidth: (width: number) => void;
-  dataVersion: number;
-  bumpData: () => void;
-  detailTaskId: string | null;
-  openTaskDetail: (id: string) => void;
-  closeTaskDetail: () => void;
-  paletteOpen: boolean;
-  setPaletteOpen: (open: boolean) => void;
-  quickAddOpen: boolean;
-  setQuickAddOpen: (open: boolean) => void;
+  section: SectionId;
+  setSection: (section: SectionId) => void;
 }
 
 const StoreContext = createContext<Store | null>(null);
 
-function loadSetting<T extends string>(key: string, fallback: T): T {
+function loadTheme(): ThemeSetting {
   try {
-    return (localStorage.getItem(key) as T) ?? fallback;
+    const saved = localStorage.getItem("bizi.theme");
+    return saved === "dark" || saved === "light" ? saved : "light";
   } catch {
-    return fallback;
+    return "light";
   }
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [route, setRoute] = useState<Route>({ kind: "today" });
-  const [theme, setThemeState] = useState<ThemeSetting>(() =>
-    loadSetting<ThemeSetting>("bizi.theme", "system"),
-  );
+  const [theme, setThemeState] = useState<ThemeSetting>(loadTheme);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem("bizi.sidebar") === "1",
   );
-  // Same bounds and default as Lotus Notes: 220–480px, default 272px.
+  // Same bounds and default as Lotus Notes: 220-480px, default 272px.
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     Math.min(480, Math.max(220, Number(localStorage.getItem("bizi.sidebar-width")) || 272)),
   );
-  const [dataVersion, setDataVersion] = useState(0);
-  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [quickAddOpen, setQuickAddOpen] = useState(false);
-
-  const navigate = useCallback((next: Route) => {
-    setRoute(next);
-    setDetailTaskId(null);
-  }, []);
+  const [section, setSection] = useState<SectionId>("today");
 
   const setTheme = useCallback((next: ThemeSetting) => {
     setThemeState(next);
@@ -87,15 +70,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const toggleTheme = useCallback(() => {
+    setThemeState((prev) => {
+      const next: ThemeSetting = prev === "light" ? "dark" : "light";
+      try {
+        localStorage.setItem("bizi.theme", next);
+      } catch {
+        // storage unavailable
+      }
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => {
-      const dark = theme === "dark" || (theme === "system" && media.matches);
-      document.documentElement.dataset.theme = dark ? "dark" : "light";
-    };
-    apply();
-    media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
+    document.documentElement.dataset.theme = theme;
   }, [theme]);
 
   const toggleSidebar = useCallback(() => {
@@ -119,43 +107,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const bumpData = useCallback(() => setDataVersion((v) => v + 1), []);
-
   const value = useMemo<Store>(
     () => ({
-      route,
-      navigate,
       theme,
       setTheme,
+      toggleTheme,
       sidebarCollapsed,
       toggleSidebar,
       sidebarWidth,
       setSidebarWidth,
-      dataVersion,
-      bumpData,
-      detailTaskId,
-      openTaskDetail: setDetailTaskId,
-      closeTaskDetail: () => setDetailTaskId(null),
-      paletteOpen,
-      setPaletteOpen,
-      quickAddOpen,
-      setQuickAddOpen,
+      section,
+      setSection,
     }),
-    [
-      route,
-      navigate,
-      theme,
-      setTheme,
-      sidebarCollapsed,
-      toggleSidebar,
-      sidebarWidth,
-      setSidebarWidth,
-      dataVersion,
-      bumpData,
-      detailTaskId,
-      paletteOpen,
-      quickAddOpen,
-    ],
+    [theme, setTheme, toggleTheme, sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth, section, setSection],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
@@ -163,48 +127,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
 export function useStore(): Store {
   const store = useContext(StoreContext);
-  if (!store) throw new Error("useStore must be used within StoreProvider");
+  if (!store) throw new Error("useStore must be used inside StoreProvider");
   return store;
-}
-
-/** Load data whenever the version changes or deps change. */
-export function useQuery<T>(fn: () => Promise<T>, deps: unknown[] = []): {
-  data: T | null;
-  loading: boolean;
-  reload: () => void;
-} {
-  const { dataVersion } = useStore();
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const fnRef = useRef(fn);
-  fnRef.current = fn;
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fnRef
-      .current()
-      .then((result) => {
-        if (!cancelled) setData(result);
-      })
-      .catch((error) => {
-        console.error(error);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataVersion, ...deps]);
-
-  const reload = useCallback(() => {
-    fnRef
-      .current()
-      .then(setData)
-      .catch((error) => console.error(error));
-  }, []);
-
-  return { data, loading, reload };
 }
