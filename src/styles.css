@@ -1816,15 +1816,24 @@ button.project-row:hover {
 }
 
 .agenda-body {
-  padding: 16px 24px 14px;
+  display: flex;
+  padding: 16px 0 14px;
+}
+
+/* Spacer mirrors the weekday cell so tasks sit under the date bar. */
+.agenda-body::before {
+  content: "";
+  width: 180px;
+  flex-shrink: 0;
 }
 
 .agenda-rows {
-  max-width: 620px;
-  margin: 0 auto;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
+  padding-right: 24px;
 }
 
 .agenda-row {
