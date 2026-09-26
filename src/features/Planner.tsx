@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
+import { CalendarRange, Check, ChevronDown } from "lucide-react";
 import { addDaysISO, numericDate, todayISO, weekdayLabel } from "../utils/date";
 
 export interface DailyTask {
@@ -8,8 +9,17 @@ export interface DailyTask {
 }
 
 const STORAGE_KEY = "bizi.daily-tasks.v1";
-const DAYS_AHEAD = 7;
+const VIEW_KEY = "bizi.planner-view";
 const DRAG_TYPE = "application/x-bizi-daily-task";
+
+const VIEW_MODES = [
+  { id: "day", label: "Day" },
+  { id: "week", label: "Week" },
+  { id: "month", label: "Month" },
+  { id: "year", label: "Year" },
+] as const;
+
+type ViewMode = (typeof VIEW_MODES)[number]["id"];
 
 type ByDay = Record<string, DailyTask[]>;
 
@@ -21,6 +31,11 @@ function load(): ByDay {
     // corrupted or unavailable storage
   }
   return {};
+}
+
+function loadView(): ViewMode {
+  const saved = localStorage.getItem(VIEW_KEY);
+  return (VIEW_MODES.some((m) => m.id === saved) ? saved : "week") as ViewMode;
 }
 
 function newId(): string {
@@ -43,8 +58,30 @@ function readPayload(e: DragEvent): DragPayload | null {
   }
 }
 
+/** The days to show for a view mode, always starting at today. */
+function daysFor(mode: ViewMode, today: string): string[] {
+  let end: string;
+  if (mode === "day") {
+    end = today;
+  } else if (mode === "week") {
+    end = addDaysISO(today, 6);
+  } else if (mode === "month") {
+    const [y, m] = today.split("-");
+    const last = new Date(Number(y), Number(m), 0).getDate();
+    end = `${y}-${m}-${String(last).padStart(2, "0")}`;
+  } else {
+    end = `${today.slice(0, 4)}-12-31`;
+  }
+  const out: string[] = [];
+  for (let cursor = today; cursor <= end; cursor = addDaysISO(cursor, 1)) {
+    out.push(cursor);
+  }
+  return out;
+}
+
 export function PlannerPage() {
   const [byDay, setByDay] = useState<ByDay>(load);
+  const [view, setView] = useState<ViewMode>(loadView);
 
   useEffect(() => {
     try {
@@ -53,6 +90,15 @@ export function PlannerPage() {
       // storage unavailable
     }
   }, [byDay]);
+
+  const changeView = (next: ViewMode) => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // storage unavailable
+    }
+  };
 
   const add = (dateISO: string, title: string) => {
     setByDay((prev) => ({
@@ -81,14 +127,73 @@ export function PlannerPage() {
     });
   };
 
-  const today = todayISO();
-  const days = Array.from({ length: DAYS_AHEAD }, (_, i) => addDaysISO(today, i));
+  const days = daysFor(view, todayISO());
 
   return (
     <div className="page">
+      <div className="planner-toolbar">
+        <ViewMenu value={view} onChange={changeView} />
+      </div>
       {days.map((day) => (
         <DayCard key={day} dateISO={day} tasks={byDay[day] ?? []} onAdd={add} onToggle={toggle} onMove={move} />
       ))}
+    </div>
+  );
+}
+
+function ViewMenu({ value, onChange }: { value: ViewMode; onChange: (mode: ViewMode) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const current = VIEW_MODES.find((m) => m.id === value) ?? VIEW_MODES[1];
+
+  return (
+    <div className="view-menu" ref={ref}>
+      <button
+        className="view-menu-trigger"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <CalendarRange size={14} aria-hidden />
+        <span>{current.label}</span>
+        <ChevronDown size={13} aria-hidden />
+      </button>
+      {open ? (
+        <div className="view-menu-pop" role="menu" aria-label="Planner view">
+          {VIEW_MODES.map((mode) => (
+            <button
+              key={mode.id}
+              role="menuitemradio"
+              aria-checked={mode.id === value}
+              className={`view-menu-item${mode.id === value ? " active" : ""}`}
+              onClick={() => {
+                onChange(mode.id);
+                setOpen(false);
+              }}
+            >
+              <span className="view-menu-check">{mode.id === value ? <Check size={13} /> : null}</span>
+              {mode.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
