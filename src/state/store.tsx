@@ -10,23 +10,6 @@ import {
 
 export type ThemeSetting = "light" | "dark";
 
-/** Sidebar sections, in display order. Rebuilt function by function. */
-export const SECTIONS = [
-  { id: "today", label: "Today" },
-  { id: "inbox", label: "Inbox" },
-  { id: "areas", label: "Areas" },
-  { id: "goals", label: "Goals" },
-  { id: "projects", label: "Projects" },
-  { id: "todo", label: "To-Do" },
-  { id: "calendar", label: "Calendar" },
-  { id: "habits", label: "Habits" },
-  { id: "reviews", label: "Reviews" },
-  { id: "archive", label: "Archive" },
-  { id: "settings", label: "Settings" },
-] as const;
-
-export type SectionId = (typeof SECTIONS)[number]["id"];
-
 interface Store {
   theme: ThemeSetting;
   setTheme: (theme: ThemeSetting) => void;
@@ -35,8 +18,6 @@ interface Store {
   toggleSidebar: () => void;
   sidebarWidth: number;
   setSidebarWidth: (width: number) => void;
-  section: SectionId;
-  setSection: (section: SectionId) => void;
 }
 
 const StoreContext = createContext<Store | null>(null);
@@ -59,7 +40,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     Math.min(480, Math.max(220, Number(localStorage.getItem("bizi.sidebar-width")) || 272)),
   );
-  const [section, setSection] = useState<SectionId>("today");
 
   const setTheme = useCallback((next: ThemeSetting) => {
     setThemeState(next);
@@ -116,10 +96,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       toggleSidebar,
       sidebarWidth,
       setSidebarWidth,
-      section,
-      setSection,
     }),
-    [theme, setTheme, toggleTheme, sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth, section, setSection],
+    [theme, setTheme, toggleTheme, sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

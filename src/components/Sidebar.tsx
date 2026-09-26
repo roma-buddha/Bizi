@@ -1,42 +1,8 @@
-import {
-  Archive,
-  CalendarDays,
-  CircleCheck,
-  FolderKanban,
-  Inbox,
-  Layers,
-  Map,
-  Repeat,
-  Settings,
-  Sun,
-  Target,
-  type LucideIcon,
-} from "lucide-react";
-import { SECTIONS, useStore, type SectionId } from "../state/store";
+import { useStore } from "../state/store";
 
-const SECTION_ICONS: Record<SectionId, LucideIcon> = {
-  today: Sun,
-  inbox: Inbox,
-  areas: Layers,
-  goals: Target,
-  projects: FolderKanban,
-  todo: CircleCheck,
-  calendar: CalendarDays,
-  habits: Repeat,
-  reviews: Map,
-  archive: Archive,
-  settings: Settings,
-};
-
-const NAV_GROUPS: SectionId[][] = [
-  ["today", "inbox"],
-  ["areas", "goals", "projects", "todo"],
-  ["calendar", "habits"],
-  ["reviews"],
-];
-
+/** Bare sidebar panel: navigation items are added back function by function. */
 export function Sidebar() {
-  const { section, setSection, sidebarCollapsed, sidebarWidth, setSidebarWidth } = useStore();
+  const { sidebarCollapsed, sidebarWidth, setSidebarWidth } = useStore();
 
   return (
     <nav className={`sidebar${sidebarCollapsed ? " collapsed" : ""}`} aria-label="Main navigation">
@@ -67,35 +33,6 @@ export function Sidebar() {
           }}
         />
       )}
-      {NAV_GROUPS.map((group, i) => (
-        <div key={group.join("-")} className="nav-group">
-          {i > 0 && !sidebarCollapsed && <div className="nav-section" />}
-          {group.map((id) => {
-            const Icon = SECTION_ICONS[id];
-            const label = SECTIONS.find((s) => s.id === id)?.label ?? id;
-            const active = section === id;
-            return (
-              <button
-                key={id}
-                className={`nav-item${active ? " active" : ""}`}
-                onClick={() => setSection(id)}
-                title={sidebarCollapsed ? label : undefined}
-                aria-current={active ? "page" : undefined}
-              >
-                <span className="nav-icon">
-                  <Icon size={16} />
-                </span>
-                {!sidebarCollapsed && <span className="nav-label">{label}</span>}
-              </button>
-            );
-          })}
-        </div>
-      ))}
-      <div className="sidebar-spacer" />
-      <div className="sidebar-foot">
-        <Sun size={12} aria-hidden />
-        {!sidebarCollapsed && <span>One life, one system</span>}
-      </div>
     </nav>
   );
 }
