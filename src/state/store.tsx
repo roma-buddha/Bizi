@@ -69,10 +69,12 @@ export interface TaskRef {
 }
 
 /** Sidebar tabs, added back function by function. */
-export type Section = "today";
+export type Section = "today" | "projects" | "areas";
 
 export const SECTION_LABELS: Record<Section, string> = {
   today: "Today",
+  projects: "Projects",
+  areas: "Areas",
 };
 
 interface Store {
@@ -96,6 +98,10 @@ interface Store {
   areas: NamedItem[];
   addProject: (title: string) => string;
   addArea: (title: string) => string;
+  renameProject: (id: string, title: string) => void;
+  renameArea: (id: string, title: string) => void;
+  deleteProject: (id: string) => void;
+  deleteArea: (id: string) => void;
   // Right detail panel.
   detail: TaskRef | null;
   openDetail: (ref: TaskRef) => void;
@@ -336,6 +342,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return id;
   }, []);
 
+  const renameProject = useCallback((id: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, title: trimmed } : p)));
+  }, []);
+
+  const renameArea = useCallback((id: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    setAreas((prev) => prev.map((a) => (a.id === id ? { ...a, title: trimmed } : a)));
+  }, []);
+
+  /** Deleting unlinks the item from every task that references it. */
+  const deleteProject = useCallback((id: string) => {
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+    setByDay((prev) => {
+      const out: ByDay = {};
+      for (const [day, tasks] of Object.entries(prev)) {
+        out[day] = tasks.map((t) => (t.projectId === id ? { ...t, projectId: null } : t));
+      }
+      return out;
+    });
+  }, []);
+
+  const deleteArea = useCallback((id: string) => {
+    setAreas((prev) => prev.filter((a) => a.id !== id));
+    setByDay((prev) => {
+      const out: ByDay = {};
+      for (const [day, tasks] of Object.entries(prev)) {
+        out[day] = tasks.map((t) => (t.areaId === id ? { ...t, areaId: null } : t));
+      }
+      return out;
+    });
+  }, []);
+
   const openDetail = useCallback((ref: TaskRef) => setDetail(ref), []);
   const closeDetail = useCallback(() => setDetail(null), []);
 
@@ -360,6 +401,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       areas,
       addProject,
       addArea,
+      renameProject,
+      renameArea,
+      deleteProject,
+      deleteArea,
       detail,
       openDetail,
       closeDetail,
@@ -384,6 +429,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       areas,
       addProject,
       addArea,
+      renameProject,
+      renameArea,
+      deleteProject,
+      deleteArea,
       detail,
       openDetail,
       closeDetail,
