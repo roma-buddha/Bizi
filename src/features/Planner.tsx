@@ -95,7 +95,9 @@ export function PlannerPage() {
   // their original (past) day cards, which keep only completed history.
   const unfulfilled = Object.entries(byDay)
     .filter(([date]) => date < today)
-    .flatMap(([dateISO, tasks]) => tasks.filter((t) => !t.done).map((task) => ({ task, dateISO })))
+    .flatMap(([dateISO, tasks]) =>
+      tasks.filter((t) => t.status !== "done" && !t.archived).map((task) => ({ task, dateISO })),
+    )
     .sort((a, b) => a.dateISO.localeCompare(b.dateISO));
 
   return (
@@ -245,7 +247,8 @@ function DayCard({
   };
 
   // Past days keep only completed history; open tasks moved to the bucket.
-  const visibleTasks = isPast ? tasks.filter((t) => t.done) : tasks;
+  // Archived tasks are hidden everywhere in the planner.
+  const visibleTasks = (isPast ? tasks.filter((t) => t.status === "done") : tasks).filter((t) => !t.archived);
 
   return (
     <section
@@ -324,10 +327,11 @@ function TaskRow({
 }) {
   const { openDetail } = useStore();
   const [dragging, setDragging] = useState(false);
+  const done = task.status === "done";
 
   return (
     <div
-      className={`agenda-row${task.done ? " completed" : ""}${dragging ? " dragging" : ""}`}
+      className={`agenda-row${done ? " completed" : ""}${dragging ? " dragging" : ""}`}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ id: task.id, sourceDate }));
@@ -341,8 +345,8 @@ function TaskRow({
       <input
         type="checkbox"
         className="task-checkbox"
-        checked={task.done}
-        aria-label={task.done ? "Mark as not done" : "Mark as done"}
+        checked={done}
+        aria-label={done ? "Mark as not done" : "Mark as done"}
         onChange={onToggle}
       />
       <button className="agenda-title" onClick={() => openDetail({ dateISO: sourceDate, id: task.id })}>

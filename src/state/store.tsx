@@ -10,15 +10,58 @@ import {
 
 export type ThemeSetting = "light" | "dark";
 
+export type TaskStatus = "todo" | "in_progress" | "waiting" | "done";
+export type Priority = "p1" | "p2" | "p3";
+export type DeadlineType = "none" | "soft" | "hard";
+
+export const TASK_STATUSES: TaskStatus[] = ["todo", "in_progress", "waiting", "done"];
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  todo: "To Do",
+  in_progress: "In Progress",
+  waiting: "Waiting",
+  done: "Done",
+};
+
+export const PRIORITIES: Priority[] = ["p1", "p2", "p3"];
+export const PRIORITY_LABELS: Record<Priority, string> = {
+  p1: "P1 · High",
+  p2: "P2 · Medium",
+  p3: "P3 · Low",
+};
+
+export const DEADLINE_TYPES: DeadlineType[] = ["none", "soft", "hard"];
+export const DEADLINE_LABELS: Record<DeadlineType, string> = {
+  none: "None",
+  soft: "Soft",
+  hard: "Hard",
+};
+
 export interface DailyTask {
   id: string;
   title: string;
-  done: boolean;
+  status: TaskStatus;
+  priority: Priority;
+  projectId: string | null;
+  areaId: string | null;
+  scheduledDate: string | null;
+  dueDate: string | null;
+  deadlineType: DeadlineType;
+  notes: string;
+  archived: boolean;
 }
 
 export type ByDay = Record<string, DailyTask[]>;
 
+export interface NamedItem {
+  id: string;
+  title: string;
+}
+
+export type TaskPatch = Partial<Omit<DailyTask, "id">>;
+
 const TASKS_KEY = "bizi.daily-tasks.v1";
+const PROJECTS_KEY = "bizi.projects.v1";
+const AREAS_KEY = "bizi.areas.v1";
 
 export interface TaskRef {
   dateISO: string;
@@ -47,7 +90,12 @@ interface Store {
   addTask: (dateISO: string, title: string) => void;
   toggleTask: (dateISO: string, id: string) => void;
   moveTask: (sourceDate: string, targetDate: string, id: string, index?: number) => void;
-  renameTask: (dateISO: string, id: string, title: string) => void;
+  updateTask: (dateISO: string, id: string, patch: TaskPatch) => void;
+  deleteTask: (dateISO: string, id: string) => void;
+  projects: NamedItem[];
+  areas: NamedItem[];
+  addProject: (title: string) => string;
+  addArea: (title: string) => string;
   // Right detail panel.
   detail: TaskRef | null;
   openDetail: (ref: TaskRef) => void;
@@ -65,20 +113,54 @@ function loadTheme(): ThemeSetting {
   }
 }
 
-function loadTasks(): ByDay {
-  try {
-    const raw = localStorage.getItem(TASKS_KEY);
-    if (raw) return JSON.parse(raw) as ByDay;
-  } catch {
-    // corrupted or unavailable storage
-  }
-  return {};
-}
-
 function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Migrate legacy {id,title,done} tasks to the full shape. */
+function migrateTask(raw: Partial<DailyTask> & { id: string; title: string }): DailyTask {
+  const legacy = raw as Partial<DailyTask> & { id: string; title: string; done?: boolean };
+  const status: TaskStatus = raw.status ?? (legacy.done === true ? "done" : "todo");
+  return {
+    id: raw.id,
+    title: raw.title,
+    status,
+    priority: raw.priority ?? "p3",
+    projectId: raw.projectId ?? null,
+    areaId: raw.areaId ?? null,
+    scheduledDate: raw.scheduledDate ?? null,
+    dueDate: raw.dueDate ?? null,
+    deadlineType: raw.deadlineType ?? "none",
+    notes: raw.notes ?? "",
+    archived: raw.archived ?? false,
+  };
+}
+
+function loadTasks(): ByDay {
+  try {
+    const raw = localStorage.getItem(TASKS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, Partial<DailyTask>[]>;
+    const out: ByDay = {};
+    for (const [day, tasks] of Object.entries(parsed)) {
+      out[day] = (tasks ?? []).map((t) => migrateTask(t as Partial<DailyTask> & { id: string; title: string }));
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function loadNamed(key: string): NamedItem[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) return JSON.parse(raw) as NamedItem[];
+  } catch {
+    // corrupted or unavailable storage
+  }
+  return [];
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -92,6 +174,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
   const [section, setSection] = useState<Section>("today");
   const [byDay, setByDay] = useState<ByDay>(loadTasks);
+  const [projects, setProjects] = useState<NamedItem[]>(() => loadNamed(PROJECTS_KEY));
+  const [areas, setAreas] = useState<NamedItem[]>(() => loadNamed(AREAS_KEY));
   const [detail, setDetail] = useState<TaskRef | null>(null);
 
   useEffect(() => {
@@ -101,6 +185,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // storage unavailable
     }
   }, [byDay]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+    } catch {
+      // storage unavailable
+    }
+  }, [projects]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AREAS_KEY, JSON.stringify(areas));
+    } catch {
+      // storage unavailable
+    }
+  }, [areas]);
 
   const setTheme = useCallback((next: ThemeSetting) => {
     setThemeState(next);
@@ -151,16 +251,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const addTask = useCallback((dateISO: string, title: string) => {
     const trimmed = title.trim();
     if (!trimmed) return;
-    setByDay((prev) => ({
-      ...prev,
-      [dateISO]: [...(prev[dateISO] ?? []), { id: newId(), title: trimmed, done: false }],
-    }));
+    const task: DailyTask = {
+      id: newId(),
+      title: trimmed,
+      status: "todo",
+      priority: "p3",
+      projectId: null,
+      areaId: null,
+      scheduledDate: null,
+      dueDate: null,
+      deadlineType: "none",
+      notes: "",
+      archived: false,
+    };
+    setByDay((prev) => ({ ...prev, [dateISO]: [...(prev[dateISO] ?? []), task] }));
   }, []);
 
   const toggleTask = useCallback((dateISO: string, id: string) => {
     setByDay((prev) => ({
       ...prev,
-      [dateISO]: (prev[dateISO] ?? []).map((t) => (t.id === id ? { ...t, done: !t.done } : t)),
+      [dateISO]: (prev[dateISO] ?? []).map((t) =>
+        t.id === id ? { ...t, status: t.status === "done" ? "todo" : "done" } : t,
+      ),
     }));
   }, []);
 
@@ -176,12 +288,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const renameTask = useCallback((dateISO: string, id: string, title: string) => {
-    if (!title.trim()) return;
+  const updateTask = useCallback((dateISO: string, id: string, patch: TaskPatch) => {
+    if ("title" in patch && !patch.title?.trim()) return;
     setByDay((prev) => ({
       ...prev,
-      [dateISO]: (prev[dateISO] ?? []).map((t) => (t.id === id ? { ...t, title } : t)),
+      [dateISO]: (prev[dateISO] ?? []).map((t) => (t.id === id ? { ...t, ...patch } : t)),
     }));
+  }, []);
+
+  const deleteTask = useCallback((dateISO: string, id: string) => {
+    setByDay((prev) => ({
+      ...prev,
+      [dateISO]: (prev[dateISO] ?? []).filter((t) => t.id !== id),
+    }));
+  }, []);
+
+  const addProject = useCallback((title: string): string => {
+    const id = newId();
+    setProjects((prev) => [...prev, { id, title }]);
+    return id;
+  }, []);
+
+  const addArea = useCallback((title: string): string => {
+    const id = newId();
+    setAreas((prev) => [...prev, { id, title }]);
+    return id;
   }, []);
 
   const openDetail = useCallback((ref: TaskRef) => setDetail(ref), []);
@@ -202,7 +333,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addTask,
       toggleTask,
       moveTask,
-      renameTask,
+      updateTask,
+      deleteTask,
+      projects,
+      areas,
+      addProject,
+      addArea,
       detail,
       openDetail,
       closeDetail,
@@ -221,7 +357,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addTask,
       toggleTask,
       moveTask,
-      renameTask,
+      updateTask,
+      deleteTask,
+      projects,
+      areas,
+      addProject,
+      addArea,
       detail,
       openDetail,
       closeDetail,
