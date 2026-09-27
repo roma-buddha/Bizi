@@ -135,6 +135,8 @@ function seedDB(): DB {
     lifeAreaId: area.id,
     status,
     priority,
+    icon: "briefcase",
+    color: area.color,
     startDate: t,
     targetDate: target,
     progressMode: "auto",
@@ -266,13 +268,192 @@ function seedDB(): DB {
 function load(): DB {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as DB;
+    if (raw) return normalize(JSON.parse(raw) as DB);
   } catch {
     // corrupted storage: reseed
+  }
+  // First run after the point0 merge: adopt data stored by the planner branch.
+  const imported = importLegacyPlannerData();
+  if (imported) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(imported));
+    return imported;
   }
   const db = seedDB();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
   return db;
+}
+
+/** Fill fields that were added after a DB was first stored. */
+function normalize(db: DB): DB {
+  const palette = ["amber", "blue", "green", "violet", "rose", "slate", "teal", "orange"];
+  db.projects = (db.projects ?? []).map((p, i) => ({
+    ...p,
+    icon: p.icon ?? "briefcase",
+    color: p.color ?? palette[i % palette.length],
+  }));
+  return db;
+}
+
+interface LegacyTask {
+  id: string;
+  title: string;
+  status?: string;
+  priority?: string;
+  projectId?: string | null;
+  areaId?: string | null;
+  scheduledDate?: string | null;
+  dueDate?: string | null;
+  deadlineType?: string;
+  notes?: string;
+  archived?: boolean;
+  done?: boolean;
+}
+
+interface LegacyArea {
+  id?: string;
+  title?: string;
+  color?: string;
+  icon?: string;
+  description?: string;
+  notes?: string;
+}
+
+interface LegacyProject {
+  id?: string;
+  title?: string;
+  color?: string;
+  icon?: string;
+  areaId?: string | null;
+  status?: string;
+  startDate?: string | null;
+  targetDate?: string | null;
+  description?: string;
+  notes?: string;
+  archived?: boolean;
+}
+
+/** Adopt point0-planner localStorage data (bizi.daily-tasks/projects/areas.v1). */
+function importLegacyPlannerData(): DB | null {
+  let rawTasks: string | null = null;
+  let rawProjects: string | null = null;
+  let rawAreas: string | null = null;
+  try {
+    rawTasks = localStorage.getItem("bizi.daily-tasks.v1");
+    rawProjects = localStorage.getItem("bizi.projects.v1");
+    rawAreas = localStorage.getItem("bizi.areas.v1");
+  } catch {
+    return null;
+  }
+  if (!rawTasks && !rawProjects && !rawAreas) return null;
+  const ts = now();
+  const notes: Note[] = [];
+  const noteFor = (entityType: EntityType, entityId: string, content: string) => {
+    if (content) notes.push({ id: uid(), entityType, entityId, content, updatedAt: ts });
+  };
+
+  const areas: LifeArea[] = [];
+  try {
+    const parsed = rawAreas ? (JSON.parse(rawAreas) as LegacyArea[]) : [];
+    parsed.forEach((a, i) => {
+      if (!a.id) return;
+      areas.push({
+        id: a.id,
+        name: a.title ?? "Untitled",
+        description: a.description ?? "",
+        icon: a.icon ?? "briefcase",
+        color: a.color ?? "amber",
+        sortOrder: i,
+        createdAt: ts,
+        updatedAt: ts,
+        archived: false,
+      });
+      noteFor("area", a.id, a.notes ?? "");
+    });
+  } catch {
+    // ignore malformed legacy areas
+  }
+
+  const projects: Project[] = [];
+  try {
+    const parsed = rawProjects ? (JSON.parse(rawProjects) as LegacyProject[]) : [];
+    parsed.forEach((p) => {
+      if (!p.id) return;
+      projects.push({
+        id: p.id,
+        title: p.title ?? "Untitled",
+        description: p.description ?? "",
+        lifeAreaId: p.areaId ?? null,
+        status: (p.status as Project["status"]) ?? "planned",
+        priority: "p3",
+        icon: p.icon ?? "briefcase",
+        color: p.color ?? "slate",
+        startDate: p.startDate ?? null,
+        targetDate: p.targetDate ?? null,
+        progressMode: "auto",
+        manualProgress: 0,
+        createdAt: ts,
+        updatedAt: ts,
+        completedAt: null,
+        archived: p.archived ?? false,
+        areaName: null,
+        goalIds: [],
+        openTasks: 0,
+        totalTasks: 0,
+      });
+      noteFor("project", p.id, p.notes ?? "");
+    });
+  } catch {
+    // ignore malformed legacy projects
+  }
+
+  const statusMap: Record<string, Task["status"]> = {
+    done: "completed",
+    todo: "todo",
+    in_progress: "in_progress",
+    waiting: "waiting",
+    cancelled: "cancelled",
+  };
+  const tasks: Task[] = [];
+  try {
+    const parsed = rawTasks
+      ? (JSON.parse(rawTasks) as Record<string, LegacyTask[]>)
+      : {};
+    for (const [day, list] of Object.entries(parsed)) {
+      const dayValid = /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null;
+      for (const t of list ?? []) {
+        if (!t.id) continue;
+        const done = t.done === true;
+        tasks.push({
+          id: t.id,
+          title: t.title,
+          description: "",
+          status: statusMap[t.status ?? (done ? "done" : "todo")] ?? "todo",
+          lifeAreaId: t.areaId ?? null,
+          projectId: t.projectId ?? null,
+          scheduledDate: t.scheduledDate ?? dayValid,
+          dueDate: t.dueDate ?? null,
+          deadlineType: (t.deadlineType as Task["deadlineType"]) ?? "none",
+          priority: (t.priority as Task["priority"]) ?? "p3",
+          estimatedMinutes: null,
+          actualMinutes: null,
+          recurrenceRule: null,
+          parentTaskId: null,
+          createdAt: ts,
+          updatedAt: ts,
+          completedAt: null,
+          archived: t.archived ?? false,
+          areaName: null,
+          projectName: null,
+          goalIds: [],
+        });
+        noteFor("task", t.id, t.notes ?? "");
+      }
+    }
+  } catch {
+    // ignore malformed legacy tasks
+  }
+
+  return { areas, goals: [], projects, tasks, habits: [], habitEntries: [], reviews: [], notes };
 }
 
 export function createBrowserApi(): BiziApi {
@@ -422,6 +603,8 @@ export function createBrowserApi(): BiziApi {
           lifeAreaId: input.lifeAreaId ?? null,
           status: input.status ?? "planned",
           priority: input.priority ?? "p3",
+          icon: input.icon ?? "briefcase",
+          color: input.color ?? "slate",
           startDate: input.startDate ?? null,
           targetDate: input.targetDate ?? null,
           progressMode: input.progressMode ?? "auto",

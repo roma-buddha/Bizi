@@ -44,6 +44,8 @@ pub struct ProjectRow {
     pub life_area_id: Option<String>,
     pub status: String,
     pub priority: String,
+    pub icon: String,
+    pub color: String,
     pub start_date: Option<String>,
     pub target_date: Option<String>,
     pub progress_mode: String,

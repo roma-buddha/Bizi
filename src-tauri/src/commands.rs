@@ -332,22 +332,24 @@ fn map_project_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectRow> {
         life_area_id: r.get(3)?,
         status: r.get(4)?,
         priority: r.get(5)?,
-        start_date: r.get(6)?,
-        target_date: r.get(7)?,
-        progress_mode: r.get(8)?,
-        manual_progress: r.get(9)?,
-        created_at: r.get(10)?,
-        updated_at: r.get(11)?,
-        completed_at: r.get(12)?,
-        archived: r.get::<_, i64>(13)? != 0,
-        area_name: r.get(14)?,
-        goal_ids: split_ids(r.get::<_, Option<String>>(15)?),
-        open_tasks: r.get(16)?,
-        total_tasks: r.get(17)?,
+        icon: r.get(6)?,
+        color: r.get(7)?,
+        start_date: r.get(8)?,
+        target_date: r.get(9)?,
+        progress_mode: r.get(10)?,
+        manual_progress: r.get(11)?,
+        created_at: r.get(12)?,
+        updated_at: r.get(13)?,
+        completed_at: r.get(14)?,
+        archived: r.get::<_, i64>(15)? != 0,
+        area_name: r.get(16)?,
+        goal_ids: split_ids(r.get::<_, Option<String>>(17)?),
+        open_tasks: r.get(18)?,
+        total_tasks: r.get(19)?,
     })
 }
 
-const PROJECT_SELECT: &str = "SELECT p.id, p.title, p.description, p.life_area_id, p.status, p.priority, p.start_date, p.target_date, p.progress_mode, p.manual_progress, p.created_at, p.updated_at, p.completed_at, p.archived, la.name, (SELECT GROUP_CONCAT(goal_id) FROM goal_projects gp WHERE gp.project_id = p.id), (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status NOT IN ('completed','cancelled') AND t.archived = 0), (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.archived = 0) FROM projects p LEFT JOIN life_areas la ON la.id = p.life_area_id";
+const PROJECT_SELECT: &str = "SELECT p.id, p.title, p.description, p.life_area_id, p.status, p.priority, p.icon, p.color, p.start_date, p.target_date, p.progress_mode, p.manual_progress, p.created_at, p.updated_at, p.completed_at, p.archived, la.name, (SELECT GROUP_CONCAT(goal_id) FROM goal_projects gp WHERE gp.project_id = p.id), (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status NOT IN ('completed','cancelled') AND t.archived = 0), (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.archived = 0) FROM projects p LEFT JOIN life_areas la ON la.id = p.life_area_id";
 
 #[tauri::command]
 pub fn project_list(
@@ -421,7 +423,7 @@ pub fn project_create(state: tauri::State<AppState>, input: Value) -> CmdResult<
     let id = new_id();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO projects (id, title, description, life_area_id, status, priority, start_date, target_date, progress_mode, manual_progress, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",
+        "INSERT INTO projects (id, title, description, life_area_id, status, priority, icon, color, start_date, target_date, progress_mode, manual_progress, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13)",
         params![
             id,
             required_string(&input, "title")?,
@@ -429,6 +431,8 @@ pub fn project_create(state: tauri::State<AppState>, input: Value) -> CmdResult<
             opt_string(&input, "lifeAreaId"),
             opt_string(&input, "status").unwrap_or_else(|| "planned".to_string()),
             opt_string(&input, "priority").unwrap_or_else(|| "p3".to_string()),
+            opt_string(&input, "icon").unwrap_or_default(),
+            opt_string(&input, "color").unwrap_or_default(),
             opt_string(&input, "startDate"),
             opt_string(&input, "targetDate"),
             opt_string(&input, "progressMode").unwrap_or_else(|| "auto".to_string()),
@@ -472,6 +476,8 @@ pub fn project_update(state: tauri::State<AppState>, id: String, patch: Value) -
             ("lifeAreaId", "life_area_id"),
             ("status", "status"),
             ("priority", "priority"),
+            ("icon", "icon"),
+            ("color", "color"),
             ("startDate", "start_date"),
             ("targetDate", "target_date"),
             ("progressMode", "progress_mode"),

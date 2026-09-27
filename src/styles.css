@@ -1280,6 +1280,11 @@ textarea.field-input {
   gap: 12px;
 }
 
+/* Fixed density (1/2/3 per row) when the density toggle sets --grid-cols. */
+.area-grid[style*="--grid-cols"] {
+  grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr));
+}
+
 .area-card {
   display: flex;
   flex-direction: column;
@@ -1780,14 +1785,26 @@ button.project-row:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  overflow: hidden;
   margin-bottom: 20px;
+}
+
+.agenda-card.drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.agenda-row.dragging {
+  opacity: 0.4;
 }
 
 .agenda-head {
   display: flex;
   align-items: stretch;
   border-bottom: 1px solid var(--border);
+  /* Clips the date bar to the card's rounded top corners, so the card
+     itself can let the today triangle poke out to the left. */
+  overflow: hidden;
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
 }
 
 .agenda-weekday {
@@ -1816,15 +1833,24 @@ button.project-row:hover {
 }
 
 .agenda-body {
-  padding: 16px 24px 14px;
+  display: flex;
+  padding: 16px 0 14px;
+}
+
+/* Spacer mirrors the weekday cell so tasks sit under the date bar. */
+.agenda-body::before {
+  content: "";
+  width: 180px;
+  flex-shrink: 0;
 }
 
 .agenda-rows {
-  max-width: 620px;
-  margin: 0 auto;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
+  padding-right: 24px;
 }
 
 .agenda-row {
@@ -1894,6 +1920,186 @@ button.project-row:hover {
 .agenda-pill-empty {
   appearance: none;
   pointer-events: none;
+}
+
+/* ---------------- planner view menu ---------------- */
+
+.planner-toolbar {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 14px;
+}
+
+.view-menu {
+  position: relative;
+}
+
+.view-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.view-menu-trigger:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.view-menu-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.view-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-small);
+  font-size: 13px;
+  text-align: left;
+  color: var(--ink);
+}
+
+.view-menu-item:hover {
+  background: var(--hover);
+}
+
+.view-menu-item.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.view-menu-check {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--accent);
+}
+
+/* ---------------- projects & areas pages ---------------- */
+
+.entity-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  max-width: 480px;
+}
+
+.entity-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.entity-row .link-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.entity-row.selected .link-row {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.entity-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.entity-counts {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.entity-tasks {
+  margin-top: 24px;
+  max-width: 640px;
+}
+
+.entity-tasks-title {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 16px;
+}
+
+.entity-task-day {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+/* Card wrapper so action buttons can sit on the corner, main-branch style. */
+.entity-card {
+  position: relative;
+}
+
+.entity-card.selected .area-card {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.entity-card-main {
+  width: 100%;
+  height: 100%;
+}
+
+.entity-card-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: none;
+  gap: 2px;
+}
+
+.entity-card:hover .entity-card-actions,
+.entity-card.selected .entity-card-actions {
+  display: flex;
+}
+
+/* Unfulfilled bucket: tasks from before the view that were never done. */
+.agenda-unfulfilled .agenda-weekday {
+  color: var(--hard);
+}
+
+.agenda-unfulfilled {
+  border-color: var(--border-strong);
+}
+
+/* Today marker: small orange triangle just left of the day's frame. */
+.agenda-today {
+  position: relative;
+}
+
+.agenda-today::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 16px;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 11px solid var(--area-orange);
 }
 
 .timeline {
@@ -2392,4 +2598,51 @@ button.project-row:hover {
     box-shadow: var(--shadow);
     z-index: 50;
   }
+}
+
+/* Back button on entity detail headers. */
+.entity-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: var(--radius-small);
+  border: 1px solid var(--border);
+  color: var(--ink-soft);
+}
+
+.entity-back:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* Full-width notes editor on entity detail pages. */
+.notes-editor {
+  width: 100%;
+  max-width: 720px;
+  font-family: inherit;
+}
+
+/* Board: draggable cards + column highlight while dragging over. */
+.board-card[draggable="true"] {
+  cursor: grab;
+}
+
+.board-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.board-column.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Gantt zoom toolbar. */
+.gantt-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-bottom: 10px;
 }

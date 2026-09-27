@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS projects (
   life_area_id TEXT REFERENCES life_areas(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'planned',
   priority TEXT NOT NULL DEFAULT 'p3',
+  icon TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT '',
   start_date TEXT,
   target_date TEXT,
   progress_mode TEXT NOT NULL DEFAULT 'manual',
@@ -176,6 +178,14 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
         seed(conn)?;
         conn.pragma_update(None, "user_version", 1)
+            .map_err(|e| e.to_string())?;
+    }
+    if version < 2 {
+        // Projects get icon/color chips for the card-grid design.
+        // Errors are ignored so this is safe if a column already exists.
+        let _ = conn.execute("ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT ''", []);
+        conn.pragma_update(None, "user_version", 2)
             .map_err(|e| e.to_string())?;
     }
     Ok(())

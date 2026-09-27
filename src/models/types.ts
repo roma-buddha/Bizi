@@ -157,6 +157,8 @@ export interface Project {
   lifeAreaId: ID | null;
   status: ProjectStatus;
   priority: Priority;
+  icon: string;
+  color: string;
   startDate: string | null;
   targetDate: string | null;
   progressMode: ProgressMode;
