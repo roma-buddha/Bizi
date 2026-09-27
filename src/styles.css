@@ -1994,6 +1994,21 @@ button.project-row:hover {
   border-color: var(--border-strong);
 }
 
+/* Today marker: small orange triangle just left of the day's frame. */
+.agenda-today {
+  position: relative;
+}
+
+.agenda-today::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 16px;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 11px solid var(--area-orange);
+}
+
 .timeline {
   border-left: 2px solid var(--border);
   margin-left: 6px;

@@ -91,6 +91,17 @@ function daysFor(mode: ViewMode, today: string): string[] {
 export function PlannerPage() {
   const [byDay, setByDay] = useState<ByDay>(load);
   const [view, setView] = useState<ViewMode>(loadView);
+  // Live date: re-reads the system clock so "today" is always real,
+  // even if the app stays open overnight.
+  const [today, setToday] = useState(todayISO);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = todayISO();
+      setToday((prev) => (prev === now ? prev : now));
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     try {
@@ -136,7 +147,6 @@ export function PlannerPage() {
     });
   };
 
-  const today = todayISO();
   const days = daysFor(view, today);
 
   // Tasks assigned to days before today that were never marked done;
@@ -178,9 +188,10 @@ export function PlannerPage() {
       ) : null}
       {days.map((day) => (
         <DayCard
-          key={day}
+          key={`${view}:${day}`}
           dateISO={day}
           isPast={day < today}
+          isToday={day === today}
           tasks={byDay[day] ?? []}
           onAdd={add}
           onToggle={toggle}
@@ -251,6 +262,7 @@ function ViewMenu({ value, onChange }: { value: ViewMode; onChange: (mode: ViewM
 function DayCard({
   dateISO,
   isPast,
+  isToday,
   tasks,
   onAdd,
   onToggle,
@@ -258,6 +270,7 @@ function DayCard({
 }: {
   dateISO: string;
   isPast: boolean;
+  isToday: boolean;
   tasks: DailyTask[];
   onAdd: (dateISO: string, title: string) => void;
   onToggle: (dateISO: string, id: string) => void;
@@ -266,6 +279,13 @@ function DayCard({
   const [draft, setDraft] = useState("");
   const [dropActive, setDropActive] = useState(false);
   const depth = useRef(0);
+  const cardRef = useRef<HTMLElement>(null);
+
+  // Keep the current date visible when the card mounts (view changes
+  // remount day cards because the day list changes).
+  useEffect(() => {
+    if (isToday) cardRef.current?.scrollIntoView({ block: "nearest" });
+  }, [isToday]);
 
   const submit = () => {
     const trimmed = draft.trim();
@@ -293,7 +313,8 @@ function DayCard({
 
   return (
     <section
-      className={`agenda-card${dropActive ? " drop-target" : ""}`}
+      ref={cardRef}
+      className={`agenda-card${dropActive ? " drop-target" : ""}${isToday ? " agenda-today" : ""}`}
       aria-label={weekdayLabel(dateISO)}
       onDragEnter={(e) => {
         if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
