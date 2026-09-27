@@ -1,6 +1,6 @@
 [package]
 name = "bizi"
-version = "0.1.0"
+version = "0.1.1"
 description = "A calm personal life organizer"
 edition = "2021"
 
