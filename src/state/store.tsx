@@ -278,8 +278,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const moveTask = useCallback((sourceDate: string, targetDate: string, id: string, index?: number) => {
     setByDay((prev) => {
-      const task = (prev[sourceDate] ?? []).find((t) => t.id === id);
-      if (!task) return prev;
+      const found = (prev[sourceDate] ?? []).find((t) => t.id === id);
+      if (!found) return prev;
+      // The planner bucket tracks the scheduled day.
+      const task = sourceDate === targetDate ? found : { ...found, scheduledDate: targetDate };
       const sourceList = (prev[sourceDate] ?? []).filter((t) => t.id !== id);
       const targetList = sourceDate === targetDate ? sourceList : [...(prev[targetDate] ?? [])];
       const at = index == null ? targetList.length : Math.min(index, targetList.length);
@@ -290,10 +292,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const updateTask = useCallback((dateISO: string, id: string, patch: TaskPatch) => {
     if ("title" in patch && !patch.title?.trim()) return;
-    setByDay((prev) => ({
-      ...prev,
-      [dateISO]: (prev[dateISO] ?? []).map((t) => (t.id === id ? { ...t, ...patch } : t)),
-    }));
+    // Changing Scheduled to another day moves the task to that day's card.
+    const targetDate = "scheduledDate" in patch ? (patch.scheduledDate ?? undefined) : undefined;
+    setByDay((prev) => {
+      const task = (prev[dateISO] ?? []).find((t) => t.id === id);
+      if (!task) return prev;
+      if (targetDate && targetDate !== dateISO) {
+        const moved = { ...task, ...patch };
+        return {
+          ...prev,
+          [dateISO]: (prev[dateISO] ?? []).filter((t) => t.id !== id),
+          [targetDate]: [...(prev[targetDate] ?? []), moved],
+        };
+      }
+      return {
+        ...prev,
+        [dateISO]: (prev[dateISO] ?? []).map((t) => (t.id === id ? { ...t, ...patch } : t)),
+      };
+    });
+    if (targetDate && targetDate !== dateISO) {
+      setDetail((prev) =>
+        prev && prev.id === id && prev.dateISO === dateISO ? { dateISO: targetDate, id } : prev,
+      );
+    }
   }, []);
 
   const deleteTask = useCallback((dateISO: string, id: string) => {

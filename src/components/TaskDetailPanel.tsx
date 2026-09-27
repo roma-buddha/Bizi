@@ -174,7 +174,7 @@ export function TaskDetailPanel() {
           </label>
         </div>
         <label className="field">
-          <span className="field-label">Type</span>
+          <span className="field-label">Deadline Type</span>
           <select
             className="field-input"
             value={task.deadlineType}
