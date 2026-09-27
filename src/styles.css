@@ -2045,6 +2045,34 @@ button.project-row:hover {
   color: var(--ink-faint);
 }
 
+/* Card wrapper so action buttons can sit on the corner, main-branch style. */
+.entity-card {
+  position: relative;
+}
+
+.entity-card.selected .area-card {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.entity-card-main {
+  width: 100%;
+  height: 100%;
+}
+
+.entity-card-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: none;
+  gap: 2px;
+}
+
+.entity-card:hover .entity-card-actions,
+.entity-card.selected .entity-card-actions {
+  display: flex;
+}
+
 /* Unfulfilled bucket: tasks from before the view that were never done. */
 .agenda-unfulfilled .agenda-weekday {
   color: var(--hard);

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { FolderKanban, Layers } from "lucide-react";
 import { useStore, type DailyTask, type NamedItem } from "../state/store";
 import { numericDate } from "../utils/date";
 
@@ -46,6 +47,7 @@ function EntityListPage({
   const rename = kind === "projects" ? renameProject : renameArea;
   const remove = kind === "projects" ? deleteProject : deleteArea;
   const field = kind === "projects" ? "projectId" : "areaId";
+  const Icon = kind === "projects" ? FolderKanban : Layers;
 
   const [draft, setDraft] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -82,7 +84,11 @@ function EntityListPage({
   const removeItem = (item: NamedItem) => {
     const c = counts.get(item.id);
     const used = c ? c.open + c.done : 0;
-    if (!window.confirm(`Delete ${singular} "${item.title}"?${used ? ` ${used} task${used === 1 ? "" : "s"} will be unlinked.` : ""}`))
+    if (
+      !window.confirm(
+        `Delete ${singular} "${item.title}"?${used ? ` ${used} task${used === 1 ? "" : "s"} will be unlinked.` : ""}`,
+      )
+    )
       return;
     remove(item.id);
     if (selectedId === item.id) setSelectedId(null);
@@ -113,23 +119,38 @@ function EntityListPage({
       {items.length === 0 ? (
         <p className="muted">No {kind} yet — create one above, or from a task's detail panel.</p>
       ) : (
-        <div className="link-list">
+        <div className="area-grid">
           {items.map((item) => {
             const c = counts.get(item.id);
             return (
-              <div key={item.id} className={`entity-row${selectedId === item.id ? " selected" : ""}`}>
-                <button className="link-row" onClick={() => setSelectedId(item.id)}>
-                  <span className="entity-name">{item.title}</span>
-                  <span className="entity-counts">
+              <div key={item.id} className={`entity-card${selectedId === item.id ? " selected" : ""}`}>
+                <button className="area-card entity-card-main" onClick={() => setSelectedId(item.id)}>
+                  <span className="area-card-icon" data-color={item.color}>
+                    <Icon size={18} />
+                  </span>
+                  <span className="area-card-name">{item.title}</span>
+                  <span className="area-card-meta">
                     {c ? `${c.open} open · ${c.done} done` : "no tasks"}
                   </span>
                 </button>
-                <button className="icon-button small" title={`Rename ${singular}`} aria-label={`Rename ${singular}`} onClick={() => renameItem(item)}>
-                  ✎
-                </button>
-                <button className="icon-button small" title={`Delete ${singular}`} aria-label={`Delete ${singular}`} onClick={() => removeItem(item)}>
-                  ×
-                </button>
+                <div className="entity-card-actions">
+                  <button
+                    className="icon-button small"
+                    title={`Rename ${singular}`}
+                    aria-label={`Rename ${singular}`}
+                    onClick={() => renameItem(item)}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="icon-button small"
+                    title={`Delete ${singular}`}
+                    aria-label={`Delete ${singular}`}
+                    onClick={() => removeItem(item)}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
             );
           })}

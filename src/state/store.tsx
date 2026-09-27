@@ -55,7 +55,19 @@ export type ByDay = Record<string, DailyTask[]>;
 export interface NamedItem {
   id: string;
   title: string;
+  color: string;
 }
+
+export const ITEM_COLORS = [
+  "amber",
+  "blue",
+  "green",
+  "violet",
+  "rose",
+  "slate",
+  "teal",
+  "orange",
+] as const;
 
 export type TaskPatch = Partial<Omit<DailyTask, "id">>;
 
@@ -72,7 +84,7 @@ export interface TaskRef {
 export type Section = "today" | "projects" | "areas";
 
 export const SECTION_LABELS: Record<Section, string> = {
-  today: "Today",
+  today: "To-Do",
   projects: "Projects",
   areas: "Areas",
 };
@@ -162,7 +174,14 @@ function loadTasks(): ByDay {
 function loadNamed(key: string): NamedItem[] {
   try {
     const raw = localStorage.getItem(key);
-    if (raw) return JSON.parse(raw) as NamedItem[];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Partial<NamedItem>[];
+    // Assign colors to items stored before colors existed.
+    return parsed.map((item, i) => ({
+      id: item.id ?? newId(),
+      title: item.title ?? "Untitled",
+      color: item.color ?? ITEM_COLORS[i % ITEM_COLORS.length],
+    }));
   } catch {
     // corrupted or unavailable storage
   }
@@ -332,13 +351,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const addProject = useCallback((title: string): string => {
     const id = newId();
-    setProjects((prev) => [...prev, { id, title }]);
+    setProjects((prev) => [
+      ...prev,
+      { id, title, color: ITEM_COLORS[prev.length % ITEM_COLORS.length] },
+    ]);
     return id;
   }, []);
 
   const addArea = useCallback((title: string): string => {
     const id = newId();
-    setAreas((prev) => [...prev, { id, title }]);
+    setAreas((prev) => [...prev, { id, title, color: ITEM_COLORS[prev.length % ITEM_COLORS.length] }]);
     return id;
   }, []);
 
