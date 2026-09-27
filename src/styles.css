@@ -1280,6 +1280,11 @@ textarea.field-input {
   gap: 12px;
 }
 
+/* Fixed density (1/2/3 per row) when the density toggle sets --grid-cols. */
+.area-grid[style*="--grid-cols"] {
+  grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr));
+}
+
 .area-card {
   display: flex;
   flex-direction: column;
@@ -2593,4 +2598,29 @@ button.project-row:hover {
     box-shadow: var(--shadow);
     z-index: 50;
   }
+}
+
+/* Back button on entity detail headers. */
+.entity-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: var(--radius-small);
+  border: 1px solid var(--border);
+  color: var(--ink-soft);
+}
+
+.entity-back:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* Full-width notes editor on entity detail pages. */
+.notes-editor {
+  width: 100%;
+  max-width: 720px;
+  font-family: inherit;
 }

@@ -143,14 +143,14 @@ export function TaskDetailPanel() {
             value={task.projectId ?? ""}
             items={projects}
             onChange={(id) => patch({ projectId: id })}
-            onCreate={addProject}
+            onCreate={(title) => addProject({ title })}
           />
           <NamedSelect
             label="Area"
             value={task.areaId ?? ""}
             items={areas}
             onChange={(id) => patch({ areaId: id })}
-            onCreate={addArea}
+            onCreate={(title) => addArea({ title })}
           />
         </div>
         <div className="field-grid">

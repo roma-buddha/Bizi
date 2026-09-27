@@ -36,6 +36,34 @@ export const DEADLINE_LABELS: Record<DeadlineType, string> = {
   hard: "Hard",
 };
 
+export type ProjectStatus =
+  | "idea"
+  | "planned"
+  | "active"
+  | "waiting"
+  | "on_hold"
+  | "completed"
+  | "cancelled";
+
+export const PROJECT_STATUSES: ProjectStatus[] = [
+  "idea",
+  "planned",
+  "active",
+  "waiting",
+  "on_hold",
+  "completed",
+  "cancelled",
+];
+export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
+  idea: "Idea",
+  planned: "Planned",
+  active: "Active",
+  waiting: "Waiting",
+  on_hold: "On Hold",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+
 export interface DailyTask {
   id: string;
   title: string;
@@ -52,10 +80,47 @@ export interface DailyTask {
 
 export type ByDay = Record<string, DailyTask[]>;
 
-export interface NamedItem {
+/** Life area — a permanent domain of your life (main-branch model). */
+export interface AreaItem {
   id: string;
   title: string;
   color: string;
+  icon: string;
+  description: string;
+  notes: string;
+}
+
+/** Project — a temporary initiative with a desired outcome (main-branch model). */
+export interface ProjectItem {
+  id: string;
+  title: string;
+  color: string;
+  icon: string;
+  areaId: string | null;
+  status: ProjectStatus;
+  startDate: string | null;
+  targetDate: string | null;
+  description: string;
+  notes: string;
+  archived: boolean;
+}
+
+export interface AreaInput {
+  title: string;
+  icon?: string;
+  color?: string;
+  description?: string;
+}
+
+export interface ProjectInput {
+  title: string;
+  areaId?: string | null;
+  status?: ProjectStatus;
+  startDate?: string | null;
+  targetDate?: string | null;
+  description?: string;
+  icon?: string;
+  color?: string;
 }
 
 export const ITEM_COLORS = [
@@ -69,7 +134,28 @@ export const ITEM_COLORS = [
   "orange",
 ] as const;
 
+export const ENTITY_ICONS = [
+  "briefcase",
+  "flask-conical",
+  "heart-pulse",
+  "wallet",
+  "users",
+  "calendar-check",
+  "graduation-cap",
+  "plane",
+  "home",
+  "book-open",
+  "dumbbell",
+  "music",
+  "palette",
+  "code",
+  "sprout",
+  "compass",
+] as const;
+
 export type TaskPatch = Partial<Omit<DailyTask, "id">>;
+export type AreaPatch = Partial<Omit<AreaItem, "id">>;
+export type ProjectPatch = Partial<Omit<ProjectItem, "id">>;
 
 const TASKS_KEY = "bizi.daily-tasks.v1";
 const PROJECTS_KEY = "bizi.projects.v1";
@@ -101,19 +187,29 @@ interface Store {
   setSection: (section: Section) => void;
   // Daily planner state (localStorage-backed until the data layer lands).
   byDay: ByDay;
-  addTask: (dateISO: string, title: string) => void;
+  addTask: (
+    dateISO: string,
+    title: string,
+    link?: { projectId?: string | null; areaId?: string | null },
+  ) => string;
   toggleTask: (dateISO: string, id: string) => void;
   moveTask: (sourceDate: string, targetDate: string, id: string, index?: number) => void;
   updateTask: (dateISO: string, id: string, patch: TaskPatch) => void;
   deleteTask: (dateISO: string, id: string) => void;
-  projects: NamedItem[];
-  areas: NamedItem[];
-  addProject: (title: string) => string;
-  addArea: (title: string) => string;
-  renameProject: (id: string, title: string) => void;
-  renameArea: (id: string, title: string) => void;
+  projects: ProjectItem[];
+  areas: AreaItem[];
+  addProject: (input: ProjectInput) => string;
+  addArea: (input: AreaInput) => string;
+  updateProject: (id: string, patch: ProjectPatch) => void;
+  updateArea: (id: string, patch: AreaPatch) => void;
   deleteProject: (id: string) => void;
   deleteArea: (id: string) => void;
+  // Selected entity (project/area detail view), kept in the store so areas
+  // and projects can cross-link into each other's detail pages.
+  selectedProjectId: string | null;
+  selectedAreaId: string | null;
+  openProject: (id: string | null) => void;
+  openArea: (id: string | null) => void;
   // Right detail panel.
   detail: TaskRef | null;
   openDetail: (ref: TaskRef) => void;
@@ -171,21 +267,55 @@ function loadTasks(): ByDay {
   }
 }
 
-function loadNamed(key: string): NamedItem[] {
+/** Fill fields that older stored shapes (plain {id,title,color}) are missing. */
+function migrateArea(raw: Partial<AreaItem> & { id?: string; title?: string }, index: number): AreaItem {
+  return {
+    id: raw.id ?? newId(),
+    title: raw.title ?? "Untitled",
+    color: raw.color ?? ITEM_COLORS[index % ITEM_COLORS.length],
+    icon: raw.icon ?? ENTITY_ICONS[index % ENTITY_ICONS.length],
+    description: raw.description ?? "",
+    notes: raw.notes ?? "",
+  };
+}
+
+function migrateProject(
+  raw: Partial<ProjectItem> & { id?: string; title?: string },
+  index: number,
+): ProjectItem {
+  return {
+    id: raw.id ?? newId(),
+    title: raw.title ?? "Untitled",
+    color: raw.color ?? ITEM_COLORS[(index + 3) % ITEM_COLORS.length],
+    icon: raw.icon ?? "briefcase",
+    areaId: raw.areaId ?? null,
+    status: raw.status ?? "planned",
+    startDate: raw.startDate ?? null,
+    targetDate: raw.targetDate ?? null,
+    description: raw.description ?? "",
+    notes: raw.notes ?? "",
+    archived: raw.archived ?? false,
+  };
+}
+
+function loadAreas(): AreaItem[] {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = localStorage.getItem(AREAS_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as Partial<NamedItem>[];
-    // Assign colors to items stored before colors existed.
-    return parsed.map((item, i) => ({
-      id: item.id ?? newId(),
-      title: item.title ?? "Untitled",
-      color: item.color ?? ITEM_COLORS[i % ITEM_COLORS.length],
-    }));
+    return (JSON.parse(raw) as Partial<AreaItem>[]).map((a, i) => migrateArea(a, i));
   } catch {
-    // corrupted or unavailable storage
+    return [];
   }
-  return [];
+}
+
+function loadProjects(): ProjectItem[] {
+  try {
+    const raw = localStorage.getItem(PROJECTS_KEY);
+    if (!raw) return [];
+    return (JSON.parse(raw) as Partial<ProjectItem>[]).map((p, i) => migrateProject(p, i));
+  } catch {
+    return [];
+  }
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -199,8 +329,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
   const [section, setSection] = useState<Section>("today");
   const [byDay, setByDay] = useState<ByDay>(loadTasks);
-  const [projects, setProjects] = useState<NamedItem[]>(() => loadNamed(PROJECTS_KEY));
-  const [areas, setAreas] = useState<NamedItem[]>(() => loadNamed(AREAS_KEY));
+  const [projects, setProjects] = useState<ProjectItem[]>(loadProjects);
+  const [areas, setAreas] = useState<AreaItem[]>(loadAreas);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
   const [detail, setDetail] = useState<TaskRef | null>(null);
 
   useEffect(() => {
@@ -273,24 +405,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const addTask = useCallback((dateISO: string, title: string) => {
-    const trimmed = title.trim();
-    if (!trimmed) return;
-    const task: DailyTask = {
-      id: newId(),
-      title: trimmed,
-      status: "todo",
-      priority: "p3",
-      projectId: null,
-      areaId: null,
-      scheduledDate: null,
-      dueDate: null,
-      deadlineType: "none",
-      notes: "",
-      archived: false,
-    };
-    setByDay((prev) => ({ ...prev, [dateISO]: [...(prev[dateISO] ?? []), task] }));
-  }, []);
+  const addTask = useCallback(
+    (dateISO: string, title: string, link?: { projectId?: string | null; areaId?: string | null }): string => {
+      const trimmed = title.trim();
+      if (!trimmed) return "";
+      const task: DailyTask = {
+        id: newId(),
+        title: trimmed,
+        status: "todo",
+        priority: "p3",
+        projectId: link?.projectId ?? null,
+        areaId: link?.areaId ?? null,
+        scheduledDate: dateISO,
+        dueDate: null,
+        deadlineType: "none",
+        notes: "",
+        archived: false,
+      };
+      setByDay((prev) => ({ ...prev, [dateISO]: [...(prev[dateISO] ?? []), task] }));
+      return task.id;
+    },
+    [],
+  );
 
   const toggleTask = useCallback((dateISO: string, id: string) => {
     setByDay((prev) => ({
@@ -349,36 +485,60 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
-  const addProject = useCallback((title: string): string => {
+  const addProject = useCallback((input: ProjectInput): string => {
     const id = newId();
     setProjects((prev) => [
       ...prev,
-      { id, title, color: ITEM_COLORS[prev.length % ITEM_COLORS.length] },
+      migrateProject(
+        {
+          id,
+          title: input.title,
+          color: input.color,
+          icon: input.icon,
+          areaId: input.areaId ?? null,
+          status: input.status,
+          startDate: input.startDate ?? null,
+          targetDate: input.targetDate ?? null,
+          description: input.description,
+        },
+        prev.length,
+      ),
     ]);
     return id;
   }, []);
 
-  const addArea = useCallback((title: string): string => {
+  const addArea = useCallback((input: AreaInput): string => {
     const id = newId();
-    setAreas((prev) => [...prev, { id, title, color: ITEM_COLORS[prev.length % ITEM_COLORS.length] }]);
+    setAreas((prev) => [
+      ...prev,
+      migrateArea(
+        {
+          id,
+          title: input.title,
+          color: input.color,
+          icon: input.icon,
+          description: input.description,
+        },
+        prev.length,
+      ),
+    ]);
     return id;
   }, []);
 
-  const renameProject = useCallback((id: string, title: string) => {
-    const trimmed = title.trim();
-    if (!trimmed) return;
-    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, title: trimmed } : p)));
+  const updateProject = useCallback((id: string, patch: ProjectPatch) => {
+    if ("title" in patch && !patch.title?.trim()) return;
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }, []);
 
-  const renameArea = useCallback((id: string, title: string) => {
-    const trimmed = title.trim();
-    if (!trimmed) return;
-    setAreas((prev) => prev.map((a) => (a.id === id ? { ...a, title: trimmed } : a)));
+  const updateArea = useCallback((id: string, patch: AreaPatch) => {
+    if ("title" in patch && !patch.title?.trim()) return;
+    setAreas((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
   }, []);
 
   /** Deleting unlinks the item from every task that references it. */
   const deleteProject = useCallback((id: string) => {
     setProjects((prev) => prev.filter((p) => p.id !== id));
+    setSelectedProjectId((prev) => (prev === id ? null : prev));
     setByDay((prev) => {
       const out: ByDay = {};
       for (const [day, tasks] of Object.entries(prev)) {
@@ -390,6 +550,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const deleteArea = useCallback((id: string) => {
     setAreas((prev) => prev.filter((a) => a.id !== id));
+    setSelectedAreaId((prev) => (prev === id ? null : prev));
     setByDay((prev) => {
       const out: ByDay = {};
       for (const [day, tasks] of Object.entries(prev)) {
@@ -397,7 +558,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       return out;
     });
+    setProjects((prev) => prev.map((p) => (p.areaId === id ? { ...p, areaId: null } : p)));
   }, []);
+
+  const openProject = useCallback((id: string | null) => setSelectedProjectId(id), []);
+  const openArea = useCallback((id: string | null) => setSelectedAreaId(id), []);
 
   const openDetail = useCallback((ref: TaskRef) => setDetail(ref), []);
   const closeDetail = useCallback(() => setDetail(null), []);
@@ -423,10 +588,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       areas,
       addProject,
       addArea,
-      renameProject,
-      renameArea,
+      updateProject,
+      updateArea,
       deleteProject,
       deleteArea,
+      selectedProjectId,
+      selectedAreaId,
+      openProject,
+      openArea,
       detail,
       openDetail,
       closeDetail,
@@ -451,10 +620,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       areas,
       addProject,
       addArea,
-      renameProject,
-      renameArea,
+      updateProject,
+      updateArea,
       deleteProject,
       deleteArea,
+      selectedProjectId,
+      selectedAreaId,
+      openProject,
+      openArea,
       detail,
       openDetail,
       closeDetail,
