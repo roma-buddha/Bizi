@@ -2624,3 +2624,25 @@ button.project-row:hover {
   max-width: 720px;
   font-family: inherit;
 }
+
+/* Board: draggable cards + column highlight while dragging over. */
+.board-card[draggable="true"] {
+  cursor: grab;
+}
+
+.board-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.board-column.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Gantt zoom toolbar. */
+.gantt-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-bottom: 10px;
+}

@@ -1,4 +1,4 @@
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Columns2, Columns3, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   BucketDensityToggle,
@@ -11,11 +11,14 @@ import {
   ProgressBar,
   SectionTitle,
   SelectField,
+  SelectMenu,
   Tabs,
   TextField,
   densityStyle,
   useBucketCols,
+  type BucketCols,
 } from "../components/ui";
+import { ProjectsBoard, ProjectsGantt } from "./ProjectViews";
 import {
   PROJECT_STATUSES,
   PROJECT_STATUS_LABELS,
@@ -584,9 +587,18 @@ function ProjectDetailPage({ project }: { project: ProjectItem }) {
   );
 }
 
+type ProjectsView = "cards" | "board" | "gantt";
+
+const VIEW_OPTIONS: { id: ProjectsView; label: string }[] = [
+  { id: "cards", label: "Cards" },
+  { id: "board", label: "Board" },
+  { id: "gantt", label: "Gantt" },
+];
+
 export function ProjectsPage() {
   const { projects, areas, selectedProjectId, openProject } = useStore();
   const [creating, setCreating] = useState(false);
+  const [view, setView] = useState<ProjectsView>("cards");
   const [cols, setCols] = useBucketCols("bizi.grid-cols.projects");
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | "all">("all");
   const [areaFilter, setAreaFilter] = useState("");
@@ -602,6 +614,8 @@ export function ProjectsPage() {
     return true;
   });
 
+  const densityIcon = cols === 3 ? <Columns3 size={14} /> : cols === 2 ? <Columns2 size={14} /> : <Square size={14} />;
+
   return (
     <div className="page wide">
       <header className="page-header with-action">
@@ -610,7 +624,30 @@ export function ProjectsPage() {
           <p className="page-subtitle">Temporary initiatives with a desired outcome.</p>
         </div>
         <div className="header-actions">
-          <BucketDensityToggle value={cols} onChange={setCols} />
+          <div className="chip-group">
+            {VIEW_OPTIONS.map((v) => (
+              <button
+                key={v.id}
+                className={`chip${view === v.id ? " active" : ""}`}
+                onClick={() => setView(v.id)}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+          {view === "cards" ? (
+            <SelectMenu
+              value={String(cols)}
+              options={[
+                { value: "3", label: "Three per row" },
+                { value: "2", label: "Two per row" },
+                { value: "1", label: "One per row" },
+              ]}
+              onChange={(v) => setCols(Number(v) as BucketCols)}
+              icon={densityIcon}
+              ariaLabel="Cards per row"
+            />
+          ) : null}
           <button className="button primary" onClick={() => setCreating(true)}>
             New project
           </button>
@@ -618,34 +655,24 @@ export function ProjectsPage() {
       </header>
 
       <div className="filter-bar">
-        <button
-          className={`chip${statusFilter === "all" ? " active" : ""}`}
-          onClick={() => setStatusFilter("all")}
-        >
-          All
-        </button>
-        {PROJECT_STATUSES.map((s) => (
-          <button
-            key={s}
-            className={`chip${statusFilter === s ? " active" : ""}`}
-            onClick={() => setStatusFilter(s)}
-          >
-            {PROJECT_STATUS_LABELS[s]}
-          </button>
-        ))}
-        <select
-          className="chip-select"
+        <SelectMenu
+          value={statusFilter}
+          options={[
+            { value: "all", label: "All statuses" },
+            ...PROJECT_STATUSES.map((s) => ({ value: s, label: PROJECT_STATUS_LABELS[s] })),
+          ]}
+          onChange={(v) => setStatusFilter(v as ProjectStatus | "all")}
+          ariaLabel="Filter by status"
+        />
+        <SelectMenu
           value={areaFilter}
-          onChange={(e) => setAreaFilter(e.target.value)}
-          aria-label="Filter by area"
-        >
-          <option value="">All areas</option>
-          {areas.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.title}
-            </option>
-          ))}
-        </select>
+          options={[
+            { value: "", label: "All areas" },
+            ...areas.map((a) => ({ value: a.id, label: a.title })),
+          ]}
+          onChange={setAreaFilter}
+          ariaLabel="Filter by area"
+        />
       </div>
 
       {filtered.length === 0 ? (
@@ -657,6 +684,10 @@ export function ProjectsPage() {
             </button>
           }
         />
+      ) : view === "board" ? (
+        <ProjectsBoard projects={filtered} />
+      ) : view === "gantt" ? (
+        <ProjectsGantt projects={filtered} />
       ) : (
         <div className="area-grid" style={densityStyle(cols)}>
           {filtered.map((project) => {

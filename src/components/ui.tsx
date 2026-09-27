@@ -2,6 +2,8 @@ import {
   BookOpen,
   Briefcase,
   CalendarCheck,
+  Check,
+  ChevronDown,
   Code,
   Columns2,
   Columns3,
@@ -20,7 +22,7 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ITEM_COLORS } from "../state/store";
 
 const ENTITY_ICON_MAP: Record<string, LucideIcon> = {
@@ -311,4 +313,76 @@ export function BucketDensityToggle({
 /** Apply a density value to a grid element. */
 export function densityStyle(cols: BucketCols): CSSProperties {
   return { "--grid-cols": cols } as CSSProperties;
+}
+
+/** Small dropdown menu (trigger + pop-up list), styled like the planner view menu. */
+export function SelectMenu({
+  value,
+  options,
+  onChange,
+  icon,
+  ariaLabel,
+}: {
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+  icon?: ReactNode;
+  ariaLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const current = options.find((o) => o.value === value) ?? options[0];
+  return (
+    <div className="view-menu" ref={ref}>
+      <button
+        className="view-menu-trigger"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+      >
+        {icon}
+        <span>{current.label}</span>
+        <ChevronDown size={13} aria-hidden />
+      </button>
+      {open ? (
+        <div className="view-menu-pop" role="menu" aria-label={ariaLabel}>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              role="menuitemradio"
+              aria-checked={option.value === value}
+              className={`view-menu-item${option.value === value ? " active" : ""}`}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              <span className="view-menu-check">
+                {option.value === value ? <Check size={13} /> : null}
+              </span>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
