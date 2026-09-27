@@ -10,6 +10,28 @@ import {
 
 export type ThemeSetting = "light" | "dark";
 
+export interface DailyTask {
+  id: string;
+  title: string;
+  done: boolean;
+}
+
+export type ByDay = Record<string, DailyTask[]>;
+
+const TASKS_KEY = "bizi.daily-tasks.v1";
+
+export interface TaskRef {
+  dateISO: string;
+  id: string;
+}
+
+/** Sidebar tabs, added back function by function. */
+export type Section = "today";
+
+export const SECTION_LABELS: Record<Section, string> = {
+  today: "Today",
+};
+
 interface Store {
   theme: ThemeSetting;
   setTheme: (theme: ThemeSetting) => void;
@@ -20,14 +42,17 @@ interface Store {
   setSidebarWidth: (width: number) => void;
   section: Section;
   setSection: (section: Section) => void;
+  // Daily planner state (localStorage-backed until the data layer lands).
+  byDay: ByDay;
+  addTask: (dateISO: string, title: string) => void;
+  toggleTask: (dateISO: string, id: string) => void;
+  moveTask: (sourceDate: string, targetDate: string, id: string, index?: number) => void;
+  renameTask: (dateISO: string, id: string, title: string) => void;
+  // Right detail panel.
+  detail: TaskRef | null;
+  openDetail: (ref: TaskRef) => void;
+  closeDetail: () => void;
 }
-
-/** Sidebar tabs, added back function by function. */
-export type Section = "today";
-
-export const SECTION_LABELS: Record<Section, string> = {
-  today: "Today",
-};
 
 const StoreContext = createContext<Store | null>(null);
 
@@ -40,6 +65,22 @@ function loadTheme(): ThemeSetting {
   }
 }
 
+function loadTasks(): ByDay {
+  try {
+    const raw = localStorage.getItem(TASKS_KEY);
+    if (raw) return JSON.parse(raw) as ByDay;
+  } catch {
+    // corrupted or unavailable storage
+  }
+  return {};
+}
+
+function newId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeSetting>(loadTheme);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -50,6 +91,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     Math.min(480, Math.max(220, Number(localStorage.getItem("bizi.sidebar-width")) || 272)),
   );
   const [section, setSection] = useState<Section>("today");
+  const [byDay, setByDay] = useState<ByDay>(loadTasks);
+  const [detail, setDetail] = useState<TaskRef | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TASKS_KEY, JSON.stringify(byDay));
+    } catch {
+      // storage unavailable
+    }
+  }, [byDay]);
 
   const setTheme = useCallback((next: ThemeSetting) => {
     setThemeState(next);
@@ -97,6 +148,45 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const addTask = useCallback((dateISO: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    setByDay((prev) => ({
+      ...prev,
+      [dateISO]: [...(prev[dateISO] ?? []), { id: newId(), title: trimmed, done: false }],
+    }));
+  }, []);
+
+  const toggleTask = useCallback((dateISO: string, id: string) => {
+    setByDay((prev) => ({
+      ...prev,
+      [dateISO]: (prev[dateISO] ?? []).map((t) => (t.id === id ? { ...t, done: !t.done } : t)),
+    }));
+  }, []);
+
+  const moveTask = useCallback((sourceDate: string, targetDate: string, id: string, index?: number) => {
+    setByDay((prev) => {
+      const task = (prev[sourceDate] ?? []).find((t) => t.id === id);
+      if (!task) return prev;
+      const sourceList = (prev[sourceDate] ?? []).filter((t) => t.id !== id);
+      const targetList = sourceDate === targetDate ? sourceList : [...(prev[targetDate] ?? [])];
+      const at = index == null ? targetList.length : Math.min(index, targetList.length);
+      targetList.splice(at, 0, task);
+      return { ...prev, [sourceDate]: sourceList, [targetDate]: targetList };
+    });
+  }, []);
+
+  const renameTask = useCallback((dateISO: string, id: string, title: string) => {
+    if (!title.trim()) return;
+    setByDay((prev) => ({
+      ...prev,
+      [dateISO]: (prev[dateISO] ?? []).map((t) => (t.id === id ? { ...t, title } : t)),
+    }));
+  }, []);
+
+  const openDetail = useCallback((ref: TaskRef) => setDetail(ref), []);
+  const closeDetail = useCallback(() => setDetail(null), []);
+
   const value = useMemo<Store>(
     () => ({
       theme,
@@ -108,8 +198,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setSidebarWidth,
       section,
       setSection,
+      byDay,
+      addTask,
+      toggleTask,
+      moveTask,
+      renameTask,
+      detail,
+      openDetail,
+      closeDetail,
     }),
-    [theme, setTheme, toggleTheme, sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth, section, setSection],
+    [
+      theme,
+      setTheme,
+      toggleTheme,
+      sidebarCollapsed,
+      toggleSidebar,
+      sidebarWidth,
+      setSidebarWidth,
+      section,
+      setSection,
+      byDay,
+      addTask,
+      toggleTask,
+      moveTask,
+      renameTask,
+      detail,
+      openDetail,
+      closeDetail,
+    ],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

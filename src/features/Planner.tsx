@@ -1,14 +1,8 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { CalendarRange, Check, ChevronDown } from "lucide-react";
+import { useStore, type DailyTask } from "../state/store";
 import { addDaysISO, numericDate, todayISO, weekdayLabel } from "../utils/date";
 
-export interface DailyTask {
-  id: string;
-  title: string;
-  done: boolean;
-}
-
-const STORAGE_KEY = "bizi.daily-tasks.v1";
 const VIEW_KEY = "bizi.planner-view";
 const DRAG_TYPE = "application/x-bizi-daily-task";
 
@@ -22,27 +16,9 @@ const VIEW_MODES = [
 
 type ViewMode = (typeof VIEW_MODES)[number]["id"];
 
-type ByDay = Record<string, DailyTask[]>;
-
-function load(): ByDay {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as ByDay;
-  } catch {
-    // corrupted or unavailable storage
-  }
-  return {};
-}
-
 function loadView(): ViewMode {
   const saved = localStorage.getItem(VIEW_KEY);
   return (VIEW_MODES.some((m) => m.id === saved) ? saved : "week") as ViewMode;
-}
-
-function newId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 interface DragPayload {
@@ -89,7 +65,7 @@ function daysFor(mode: ViewMode, today: string): string[] {
 }
 
 export function PlannerPage() {
-  const [byDay, setByDay] = useState<ByDay>(load);
+  const { byDay, toggleTask, moveTask } = useStore();
   const [view, setView] = useState<ViewMode>(loadView);
   // Live date: re-reads the system clock so "today" is always real,
   // even if the app stays open overnight.
@@ -103,14 +79,6 @@ export function PlannerPage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(byDay));
-    } catch {
-      // storage unavailable
-    }
-  }, [byDay]);
-
   const changeView = (next: ViewMode) => {
     setView(next);
     try {
@@ -118,33 +86,6 @@ export function PlannerPage() {
     } catch {
       // storage unavailable
     }
-  };
-
-  const add = (dateISO: string, title: string) => {
-    setByDay((prev) => ({
-      ...prev,
-      [dateISO]: [...(prev[dateISO] ?? []), { id: newId(), title, done: false }],
-    }));
-  };
-
-  const toggle = (dateISO: string, id: string) => {
-    setByDay((prev) => ({
-      ...prev,
-      [dateISO]: (prev[dateISO] ?? []).map((t) => (t.id === id ? { ...t, done: !t.done } : t)),
-    }));
-  };
-
-  /** Move a task to another day (or reorder within its day); index = insert position. */
-  const move = (sourceDate: string, targetDate: string, id: string, index?: number) => {
-    setByDay((prev) => {
-      const task = (prev[sourceDate] ?? []).find((t) => t.id === id);
-      if (!task) return prev;
-      const sourceList = (prev[sourceDate] ?? []).filter((t) => t.id !== id);
-      const targetList = sourceDate === targetDate ? sourceList : [...(prev[targetDate] ?? [])];
-      const at = index == null ? targetList.length : Math.min(index, targetList.length);
-      targetList.splice(at, 0, task);
-      return { ...prev, [sourceDate]: sourceList, [targetDate]: targetList };
-    });
   };
 
   const days = daysFor(view, today);
@@ -177,7 +118,7 @@ export function PlannerPage() {
                   key={task.id}
                   task={task}
                   sourceDate={dateISO}
-                  onToggle={() => toggle(dateISO, task.id)}
+                  onToggle={() => toggleTask(dateISO, task.id)}
                   onDropBefore={(e) => e.preventDefault()}
                   onDragOverRow={(e) => e.preventDefault()}
                 />
@@ -193,9 +134,7 @@ export function PlannerPage() {
           isPast={day < today}
           isToday={day === today}
           tasks={byDay[day] ?? []}
-          onAdd={add}
-          onToggle={toggle}
-          onMove={move}
+          onMove={moveTask}
         />
       ))}
     </div>
@@ -264,18 +203,15 @@ function DayCard({
   isPast,
   isToday,
   tasks,
-  onAdd,
-  onToggle,
   onMove,
 }: {
   dateISO: string;
   isPast: boolean;
   isToday: boolean;
   tasks: DailyTask[];
-  onAdd: (dateISO: string, title: string) => void;
-  onToggle: (dateISO: string, id: string) => void;
   onMove: (sourceDate: string, targetDate: string, id: string, index?: number) => void;
 }) {
+  const { addTask, toggleTask } = useStore();
   const [draft, setDraft] = useState("");
   const [dropActive, setDropActive] = useState(false);
   const depth = useRef(0);
@@ -290,7 +226,7 @@ function DayCard({
   const submit = () => {
     const trimmed = draft.trim();
     if (!trimmed) return;
-    onAdd(dateISO, trimmed);
+    addTask(dateISO, trimmed);
     setDraft("");
   };
 
@@ -342,7 +278,7 @@ function DayCard({
               key={task.id}
               task={task}
               sourceDate={dateISO}
-              onToggle={() => onToggle(dateISO, task.id)}
+              onToggle={() => toggleTask(dateISO, task.id)}
               onDropBefore={(e) => handleDrop(e, index)}
               onDragOverRow={acceptDrop}
             />
@@ -386,6 +322,7 @@ function TaskRow({
   onDropBefore: (e: DragEvent) => void;
   onDragOverRow: (e: DragEvent) => void;
 }) {
+  const { openDetail } = useStore();
   const [dragging, setDragging] = useState(false);
 
   return (
@@ -408,7 +345,9 @@ function TaskRow({
         aria-label={task.done ? "Mark as not done" : "Mark as done"}
         onChange={onToggle}
       />
-      <span className="agenda-title">{task.title}</span>
+      <button className="agenda-title" onClick={() => openDetail({ dateISO: sourceDate, id: task.id })}>
+        {task.title}
+      </button>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
+import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TopBar } from "./components/TopBar";
 import { PlannerPage } from "./features/Planner";
 import { useStore } from "./state/store";
@@ -17,6 +18,7 @@ export default function App() {
       <div className="app-body">
         <Sidebar />
         <main className="main">{section === "today" ? <PlannerPage /> : null}</main>
+        <TaskDetailPanel />
       </div>
     </div>
   );
