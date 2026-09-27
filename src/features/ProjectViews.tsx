@@ -1,5 +1,4 @@
-import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProgressBar } from "../components/ui";
 import {
   PROJECT_STATUSES,
@@ -46,8 +45,8 @@ function progressOf(stats: Map<string, ProjectStats>, projectId: string): number
 /* Kanban board by status (drag & drop moves projects between columns) */
 /* ------------------------------------------------------------------ */
 
-/** Statuses that get a board column (matches the main branch). */
-const BOARD_STATUSES = PROJECT_STATUSES.filter((s) => s !== "idea" && s !== "cancelled");
+/** All statuses get a board column so nothing is hidden from the board. */
+const BOARD_STATUSES = PROJECT_STATUSES;
 
 export function ProjectsBoard({ projects }: { projects: ProjectItem[] }) {
   const { updateProject, openProject, areas } = useStore();
@@ -135,8 +134,8 @@ const COLOR_VARS: Record<string, string> = {
   orange: "var(--area-orange)",
 };
 
-const ZOOM_MIN = 6;
-const ZOOM_MAX = 120;
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 200;
 const ZOOM_DEFAULT = 24;
 
 function parseDate(iso: string): number {
@@ -160,8 +159,15 @@ interface MonthCell {
 export function ProjectsGantt({ projects }: { projects: ProjectItem[] }) {
   const { openProject } = useStore();
   const stats = useProjectStats();
-  const [pxPerDay, setPxPerDay] = useState(ZOOM_DEFAULT);
+  // null = fit the whole chart into the viewport; a number = user zoom (px/day).
+  const [pxPerDay, setPxPerDay] = useState<number | null>(null);
   const today = todayISO();
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [viewWidth, setViewWidth] = useState(0);
+  const effectiveRef = useRef(ZOOM_DEFAULT);
+  const zoomedRef = useRef(false);
+  const pendingZoom = useRef<{ ratio: number; anchor: number; scroll: number } | null>(null);
 
   const dated = useMemo(
     () =>
@@ -208,6 +214,53 @@ export function ProjectsGantt({ projects }: { projects: ProjectItem[] }) {
     return cells;
   }, [range]);
 
+  // Track the viewport width so the chart can fit without scrolling.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setViewWidth(el.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const fitPxPerDay =
+    range && viewWidth > 0 ? Math.max(ZOOM_MIN, viewWidth / range.totalDays) : ZOOM_DEFAULT;
+  const effectivePx = pxPerDay ?? fitPxPerDay;
+  effectiveRef.current = effectivePx;
+  zoomedRef.current = pxPerDay !== null;
+
+  // Mouse-wheel zoom, anchored at the cursor position.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const cur = effectiveRef.current;
+      const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
+      // In fit mode, zooming out further is a no-op.
+      if (factor < 1 && !zoomedRef.current) return;
+      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, cur * factor));
+      if (next === cur) return;
+      const rect = el.getBoundingClientRect();
+      const anchor = e.clientX - rect.left + el.scrollLeft;
+      pendingZoom.current = { ratio: next / cur, anchor, scroll: el.scrollLeft };
+      setPxPerDay(next);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // After the zoom re-render, keep the point under the cursor stationary.
+  useEffect(() => {
+    const el = scrollRef.current;
+    const pending = pendingZoom.current;
+    if (!el || !pending) return;
+    pendingZoom.current = null;
+    el.scrollLeft = pending.anchor * pending.ratio - (pending.anchor - pending.scroll);
+  }, [pxPerDay]);
+
   if (dated.length === 0) {
     return (
       <div className="gantt-empty">
@@ -230,38 +283,8 @@ export function ProjectsGantt({ projects }: { projects: ProjectItem[] }) {
     return COLOR_VARS[p.color] ?? "var(--accent)";
   };
 
-  const zoomBy = (factor: number) =>
-    setPxPerDay((prev) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(prev * factor))));
-
   return (
     <div>
-      <div className="gantt-toolbar">
-        <button
-          className="chip icon-chip"
-          title="Zoom out"
-          aria-label="Zoom out"
-          onClick={() => zoomBy(1 / 1.5)}
-        >
-          <ZoomOut size={15} />
-        </button>
-        <button
-          className="chip icon-chip"
-          title="Zoom in"
-          aria-label="Zoom in"
-          onClick={() => zoomBy(1.5)}
-        >
-          <ZoomIn size={15} />
-        </button>
-        <button
-          className="chip icon-chip"
-          title="Reset zoom"
-          aria-label="Reset zoom"
-          onClick={() => setPxPerDay(ZOOM_DEFAULT)}
-        >
-          <RotateCcw size={15} />
-        </button>
-      </div>
-
       <div className="gantt">
         <div className="gantt-names" aria-hidden>
           <div className="gantt-head-spacer" />
@@ -285,10 +308,10 @@ export function ProjectsGantt({ projects }: { projects: ProjectItem[] }) {
           ) : null}
         </div>
 
-        <div className="gantt-scroll">
+        <div className="gantt-scroll" ref={scrollRef}>
           <div
             className="gantt-chart"
-            style={{ width: `max(100%, ${range!.totalDays * pxPerDay}px)` }}
+            style={{ width: `max(100%, ${range!.totalDays * effectivePx}px)` }}
           >
             <div className="gantt-months">
               {months.map((m, i) => (

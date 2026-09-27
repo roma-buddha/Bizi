@@ -658,7 +658,7 @@ export function ProjectsPage() {
         <SelectMenu
           value={statusFilter}
           options={[
-            { value: "all", label: "All statuses" },
+            { value: "all", label: "Status" },
             ...PROJECT_STATUSES.map((s) => ({ value: s, label: PROJECT_STATUS_LABELS[s] })),
           ]}
           onChange={(v) => setStatusFilter(v as ProjectStatus | "all")}
@@ -667,7 +667,7 @@ export function ProjectsPage() {
         <SelectMenu
           value={areaFilter}
           options={[
-            { value: "", label: "All areas" },
+            { value: "", label: "Areas" },
             ...areas.map((a) => ({ value: a.id, label: a.title })),
           ]}
           onChange={setAreaFilter}
