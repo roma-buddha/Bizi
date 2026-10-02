@@ -1,10 +1,11 @@
-import { FolderKanban, Layers, Sun } from "lucide-react";
+import { FolderKanban, Hourglass, Layers, Sun } from "lucide-react";
 import { SECTION_LABELS, useStore, type Section } from "../state/store";
 
 const NAV_ITEMS: { id: Section; icon: typeof Sun }[] = [
   { id: "today", icon: Sun },
   { id: "projects", icon: FolderKanban },
   { id: "areas", icon: Layers },
+  { id: "life", icon: Hourglass },
 ];
 
 /** Sidebar panel: tabs are added back function by function. */

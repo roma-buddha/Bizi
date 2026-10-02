@@ -2646,3 +2646,160 @@ button.project-row:hover {
   gap: 4px;
   margin-bottom: 10px;
 }
+
+/* ---------------- life page ---------------- */
+
+.life-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.life-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.life-settings .muted.small {
+  margin: 8px 0 0;
+}
+
+.life-summary {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.life-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 72px;
+}
+
+.life-stat.grow {
+  flex: 1;
+  gap: 8px;
+}
+
+.life-stat-value {
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1;
+}
+
+.life-stat-label {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.life-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.life-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+  padding: 4px 10px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.life-table td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.life-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.life-table td:not(:first-child),
+.life-table th:not(:first-child) {
+  text-align: right;
+}
+
+.life-table td:first-child {
+  font-weight: 600;
+}
+
+.life-grid-wrap {
+  overflow-x: auto;
+  padding: 6px 2px 4px;
+}
+
+.life-grid {
+  display: grid;
+  gap: 2px;
+  min-width: 660px;
+}
+
+.life-col-head {
+  font-size: 9px;
+  line-height: 11px;
+  color: var(--ink-faint);
+  text-align: center;
+  align-self: end;
+}
+
+.life-row-head {
+  align-self: stretch;
+}
+
+.life-row-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  padding-right: 4px;
+  white-space: nowrap;
+}
+
+.life-row-year {
+  font-size: 9px;
+  color: var(--ink-faint);
+}
+
+.life-cell {
+  height: 11px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.life-cell.lived {
+  background: var(--accent);
+}
+
+.life-cell.current {
+  background: var(--done);
+  outline: 1px solid var(--done);
+  outline-offset: 1px;
+}
+
+.life-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.life-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.life-legend-item .life-cell {
+  width: 11px;
+  height: 11px;
+}

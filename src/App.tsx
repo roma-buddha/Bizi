@@ -3,6 +3,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TopBar } from "./components/TopBar";
 import { AreasPage, ProjectsPage } from "./features/Entities";
+import { LifePage } from "./features/Life";
 import { PlannerPage } from "./features/Planner";
 import { useStore } from "./state/store";
 
@@ -22,6 +23,7 @@ export default function App() {
           {section === "today" ? <PlannerPage /> : null}
           {section === "projects" ? <ProjectsPage /> : null}
           {section === "areas" ? <AreasPage /> : null}
+          {section === "life" ? <LifePage /> : null}
         </main>
         <TaskDetailPanel />
       </div>

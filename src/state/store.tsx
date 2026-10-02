@@ -170,12 +170,13 @@ export interface TaskRef {
 }
 
 /** Sidebar tabs, added back function by function. */
-export type Section = "today" | "projects" | "areas";
+export type Section = "today" | "projects" | "areas" | "life";
 
 export const SECTION_LABELS: Record<Section, string> = {
   today: "To-Do",
   projects: "Projects",
   areas: "Areas",
+  life: "Life",
 };
 
 /* ------------------------------------------------------------------ */
