@@ -10,16 +10,25 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../db";
+import { PersistenceCoordinator, DraftRegistry } from "./persistence";
+import type { WorkspaceSnapshot } from "../models/types";
 import type { Task as ApiTask } from "../models/types";
 import { isTauriRuntime } from "../runtime";
 
 export type ThemeSetting = "light" | "dark";
 
-export type TaskStatus = "todo" | "in_progress" | "waiting" | "done" | "cancelled";
+export type TaskStatus =
+  "todo" | "in_progress" | "waiting" | "done" | "cancelled";
 export type Priority = "p1" | "p2" | "p3";
 export type DeadlineType = "none" | "soft" | "hard";
 
-export const TASK_STATUSES: TaskStatus[] = ["todo", "in_progress", "waiting", "done", "cancelled"];
+export const TASK_STATUSES: TaskStatus[] = [
+  "todo",
+  "in_progress",
+  "waiting",
+  "done",
+  "cancelled",
+];
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   todo: "To Do",
   in_progress: "In Progress",
@@ -224,25 +233,41 @@ interface Store {
   setSection: (section: Section) => void;
   /** True once the initial load from the backend has finished. */
   hydrated: boolean;
+  pending: number;
+  error: string | null;
+  reportError: (reason: unknown) => void;
+  dismissError: () => void;
+  retryLoad: () => void;
+  flushDrafts: () => Promise<boolean>;
+  registerDraft: (key: string, flush: () => Promise<boolean>) => () => void;
   // Daily planner state (SQLite-backed via the Bizi API).
   byDay: ByDay;
   addTask: (
     dateISO: string,
     title: string,
     link?: { projectId?: string | null; areaId?: string | null },
-  ) => string;
-  toggleTask: (dateISO: string, id: string) => void;
-  moveTask: (sourceDate: string, targetDate: string, id: string, index?: number) => void;
-  updateTask: (dateISO: string, id: string, patch: TaskPatch) => void;
-  deleteTask: (dateISO: string, id: string) => void;
+  ) => Promise<string | null>;
+  toggleTask: (dateISO: string, id: string) => Promise<boolean>;
+  moveTask: (
+    sourceDate: string,
+    targetDate: string,
+    id: string,
+    index?: number,
+  ) => Promise<boolean>;
+  updateTask: (
+    dateISO: string,
+    id: string,
+    patch: TaskPatch,
+  ) => Promise<boolean>;
+  deleteTask: (dateISO: string, id: string) => Promise<boolean>;
   projects: ProjectItem[];
   areas: AreaItem[];
-  addProject: (input: ProjectInput) => string;
-  addArea: (input: AreaInput) => string;
-  updateProject: (id: string, patch: ProjectPatch) => void;
-  updateArea: (id: string, patch: AreaPatch) => void;
-  deleteProject: (id: string) => void;
-  deleteArea: (id: string) => void;
+  addProject: (input: ProjectInput) => Promise<string | null>;
+  addArea: (input: AreaInput) => Promise<string | null>;
+  updateProject: (id: string, patch: ProjectPatch) => Promise<boolean>;
+  updateArea: (id: string, patch: AreaPatch) => Promise<boolean>;
+  deleteProject: (id: string) => Promise<boolean>;
+  deleteArea: (id: string) => Promise<boolean>;
   // Selected entity (project/area detail view), kept in the store so areas
   // and projects can cross-link into each other's detail pages.
   selectedProjectId: string | null;
@@ -266,18 +291,6 @@ function loadTheme(): ThemeSetting {
   }
 }
 
-function newId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-const fire = (promise: Promise<unknown>) => {
-  promise.catch(() => {
-    // Backend unreachable or row missing: the optimistic local state stays.
-  });
-};
-
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeSetting>(loadTheme);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -285,97 +298,142 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
   // Same bounds and default as Lotus Notes: 220-480px, default 272px.
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
-    Math.min(480, Math.max(220, Number(localStorage.getItem("bizi.sidebar-width")) || 272)),
+    Math.min(
+      480,
+      Math.max(220, Number(localStorage.getItem("bizi.sidebar-width")) || 272),
+    ),
   );
-  const [section, setSection] = useState<Section>("today");
+  const [section, setSectionState] = useState<Section>("today");
   const [hydrated, setHydrated] = useState(false);
-  const hydratedRef = useRef(false);
+  const [pending, setPending] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const drafts = useMemo(() => new DraftRegistry(), []);
+  const flushDrafts = useCallback(() => drafts.flush(), [drafts]);
+  const registerDraft = useCallback(
+    (key: string, flush: () => Promise<boolean>) => drafts.register(key, flush),
+    [drafts],
+  );
+  const dismissError = useCallback(() => setError(null), []);
+  const report = useCallback(
+    (reason: unknown) =>
+      setError(reason instanceof Error ? reason.message : String(reason)),
+    [],
+  );
   const [byDay, setByDay] = useState<ByDay>({});
+  const byDayRef = useRef(byDay);
+  useEffect(() => {
+    byDayRef.current = byDay;
+  }, [byDay]);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [areas, setAreas] = useState<AreaItem[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    null,
+  );
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
   const [detail, setDetail] = useState<TaskRef | null>(null);
 
-  // Initial load from the backend (SQLite in the app, browser DB in dev).
-  const loadRef = useRef<() => Promise<void>>(async () => {});
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      const [taskRows, projectRows, areaRows] = await Promise.all([
-        api.task.list({ includeArchived: true, excludeStatuses: [] }),
-        api.project.list({ includeArchived: true }),
-        api.area.list(true),
-      ]);
-      if (cancelled) return;
-      const [taskNotes, projectNotes, areaNotes] = await Promise.all([
-        Promise.all(taskRows.map((t) => api.note.get("task", t.id))),
-        Promise.all(projectRows.map((p) => api.note.get("project", p.id))),
-        Promise.all(areaRows.map((a) => api.note.get("area", a.id))),
-      ]);
-      if (cancelled) return;
-
-      const buckets: ByDay = {};
-      taskRows.forEach((row, i) => {
-        const task = taskFromApi(row, taskNotes[i]?.content ?? "");
-        const key = row.scheduledDate ?? UNSCHEDULED;
-        (buckets[key] ??= []).push(task);
-      });
-
-      setByDay(buckets);
-      setProjects(
-        projectRows.map((row, i) => ({
-          id: row.id,
-          title: row.title,
-          color: row.color || "slate",
-          icon: row.icon || "briefcase",
-          areaId: row.lifeAreaId,
-          status: row.status,
-          startDate: row.startDate,
-          targetDate: row.targetDate,
-          description: row.description,
-          notes: projectNotes[i]?.content ?? "",
-          archived: row.archived,
-        })),
+  const publish = useCallback((snapshot: WorkspaceSnapshot) => {
+    const notes = new Map(
+      snapshot.notes.map((n) => [n.entityType + ":" + n.entityId, n.content]),
+    );
+    const buckets: ByDay = {};
+    for (const row of snapshot.tasks)
+      (buckets[row.scheduledDate ?? UNSCHEDULED] ??= []).push(
+        taskFromApi(row, notes.get("task:" + row.id) ?? ""),
       );
-      setAreas(
-        areaRows.map((row, i) => ({
+    setByDay((previous) => {
+      for (const [date, tasks] of Object.entries(buckets)) {
+        const old = previous[date];
+        if (old && JSON.stringify(old) === JSON.stringify(tasks))
+          buckets[date] = old;
+      }
+      return buckets;
+    });
+    setProjects(
+      snapshot.projects.map((row) => ({
+        id: row.id,
+        title: row.title,
+        color: row.color || "slate",
+        icon: row.icon || "briefcase",
+        areaId: row.lifeAreaId,
+        status: row.status,
+        startDate: row.startDate,
+        targetDate: row.targetDate,
+        description: row.description,
+        notes: notes.get("project:" + row.id) ?? "",
+        archived: row.archived,
+      })),
+    );
+    setAreas(
+      snapshot.areas
+        .filter((a) => !a.archived)
+        .map((row) => ({
           id: row.id,
           title: row.name,
           color: row.color || "amber",
           icon: row.icon || "compass",
           description: row.description,
-          notes: areaNotes[i]?.content ?? "",
+          notes: notes.get("area:" + row.id) ?? "",
         })),
-      );
-      hydratedRef.current = true;
-      setHydrated(true);
-    };
-    loadRef.current = load;
-    fire(load());
-    return () => {
-      cancelled = true;
-    };
+    );
+    setDetail((previous) => {
+      if (!previous) return null;
+      const row = snapshot.tasks.find((t) => t.id === previous.id);
+      return row
+        ? { dateISO: row.scheduledDate ?? UNSCHEDULED, id: row.id }
+        : null;
+    });
+    setHydrated(true);
   }, []);
-
-  // The local AI bridge runs inside the desktop app and emits this event after
-  // every write it performs; re-sync the store so external changes appear.
+  const [coordinator, setCoordinator] =
+    useState<PersistenceCoordinator<WorkspaceSnapshot> | null>(null);
   useEffect(() => {
-    if (!isTauriRuntime()) return;
+    const next = new PersistenceCoordinator(
+      api.snapshot,
+      publish,
+      report,
+      setPending,
+    );
+    setCoordinator(next);
+    void next.refresh().catch(() => undefined);
     let unlisten: (() => void) | undefined;
-    listen("bizi://data-changed", () => {
-      fire(loadRef.current());
-    })
-      .then((fn) => {
-        unlisten = fn;
+    let disposed = false;
+    if (isTauriRuntime()) {
+      listen("bizi://data-changed", () => {
+        void next.refresh().catch(() => undefined);
       })
-      .catch(() => {
-        // backend unreachable: local state stays
-      });
+        .then((fn) => {
+          if (disposed) fn();
+          else unlisten = fn;
+        })
+        .catch(report);
+    }
     return () => {
+      disposed = true;
       unlisten?.();
+      next.dispose();
     };
-  }, []);
+  }, [publish, report]);
+  const retryLoad = useCallback(() => {
+    void coordinator
+      ?.refresh()
+      .then(() => setError(null))
+      .catch(() => undefined);
+  }, [coordinator]);
+  const run = useCallback(
+    async <T,>(write: () => Promise<T>): Promise<T | null> => {
+      if (!hydrated || !coordinator) {
+        report(new Error("Wait for data to load before editing"));
+        return null;
+      }
+      try {
+        return await coordinator.mutate(write);
+      } catch {
+        return null;
+      }
+    },
+    [coordinator, hydrated, report],
+  );
 
   const setTheme = useCallback((next: ThemeSetting) => {
     setThemeState(next);
@@ -424,280 +482,229 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addTask = useCallback(
-    (dateISO: string, title: string, link?: { projectId?: string | null; areaId?: string | null }): string => {
-      const trimmed = title.trim();
-      if (!trimmed) return "";
-      const id = newId();
-      const task: DailyTask = {
-        id,
-        title: trimmed,
-        status: "todo",
-        priority: "p3",
-        projectId: link?.projectId ?? null,
-        areaId: link?.areaId ?? null,
-        scheduledDate: dateISO,
-        dueDate: null,
-        deadlineType: "none",
-        notes: "",
-        archived: false,
-      };
-      setByDay((prev) => ({ ...prev, [dateISO]: [...(prev[dateISO] ?? []), task] }));
-      fire(
-        api.task
-          .create({
-            title: trimmed,
-            status: "todo",
-            priority: "p3",
-            projectId: link?.projectId ?? null,
-            lifeAreaId: link?.areaId ?? null,
-            scheduledDate: dateISO,
-          })
-          .then((created) => {
-            if (created.id !== id) {
-              setByDay((prev) => {
-                const bucket = prev[dateISO] ?? [];
-                return {
-                  ...prev,
-                  [dateISO]: bucket.map((t) => (t.id === id ? { ...t, id: created.id } : t)),
-                };
-              });
-              setDetail((prev) =>
-                prev && prev.id === id ? { dateISO: prev.dateISO, id: created.id } : prev,
-              );
-            }
-          }),
+    async (
+      dateISO: string,
+      title: string,
+      link?: { projectId?: string | null; areaId?: string | null },
+    ) => {
+      const result = await run(() =>
+        api.task.create({
+          title: title.trim(),
+          status: "todo",
+          priority: "p3",
+          scheduledDate: dateISO === UNSCHEDULED ? null : dateISO,
+          projectId: link?.projectId ?? null,
+          lifeAreaId: link?.areaId ?? null,
+        }),
       );
-      return id;
+      return result?.id ?? null;
     },
-    [],
+    [run],
+  );
+  const toggleTask = useCallback(
+    async (dateISO: string, id: string) => {
+      const task = byDayRef.current[dateISO]?.find((t) => t.id === id);
+      if (!task) return false;
+      return (
+        (await run(async () => {
+          await api.task.setComplete(id, task.status !== "done");
+          return true;
+        })) ?? false
+      );
+    },
+    [run],
+  );
+  const moveTask = useCallback(
+    async (
+      _sourceDate: string,
+      targetDate: string,
+      id: string,
+      index?: number,
+    ) => {
+      const before =
+        index === undefined
+          ? null
+          : ((byDayRef.current[targetDate] ?? []).filter(
+              (t) => !t.archived && t.id !== id,
+            )[index]?.id ?? null);
+      return (
+        (await run(async () => {
+          await api.task.move(
+            id,
+            targetDate === UNSCHEDULED ? null : targetDate,
+            before,
+          );
+          return true;
+        })) ?? false
+      );
+    },
+    [run],
+  );
+  const updateTask = useCallback(
+    async (_dateISO: string, id: string, patch: TaskPatch) => {
+      const changes: Record<string, unknown> = {};
+      for (const key of [
+        "title",
+        "priority",
+        "scheduledDate",
+        "dueDate",
+        "deadlineType",
+        "archived",
+      ] as const)
+        if (patch[key] !== undefined) changes[key] = patch[key];
+      if (patch.status !== undefined)
+        changes.status = toApiStatus(patch.status);
+      if (patch.projectId !== undefined) changes.projectId = patch.projectId;
+      if (patch.areaId !== undefined) changes.lifeAreaId = patch.areaId;
+      return (
+        (await run(async () => {
+          if (Object.keys(changes).length) await api.task.update(id, changes);
+          if (patch.notes !== undefined)
+            await api.note.save("task", id, patch.notes);
+          return true;
+        })) ?? false
+      );
+    },
+    [run],
+  );
+  const deleteTask = useCallback(
+    async (_dateISO: string, id: string) =>
+      (await run(async () => {
+        await api.task.remove(id);
+        return true;
+      })) ?? false,
+    [run],
+  );
+  const addProject = useCallback(
+    async (input: ProjectInput) => {
+      const result = await run(() =>
+        api.project.create({
+          title: input.title,
+          icon: input.icon ?? "briefcase",
+          color: input.color ?? ITEM_COLORS[0],
+          lifeAreaId: input.areaId ?? null,
+          status: input.status ?? "planned",
+          startDate: input.startDate ?? null,
+          targetDate: input.targetDate ?? null,
+          description: input.description ?? "",
+        }),
+      );
+      return result?.id ?? null;
+    },
+    [run],
+  );
+  const addArea = useCallback(
+    async (input: AreaInput) => {
+      const result = await run(() =>
+        api.area.create({
+          name: input.title,
+          icon: input.icon ?? "compass",
+          color: input.color ?? "amber",
+          description: input.description ?? "",
+        }),
+      );
+      return result?.id ?? null;
+    },
+    [run],
+  );
+  const updateProject = useCallback(
+    async (id: string, patch: ProjectPatch) => {
+      const { notes, areaId, ...rest } = patch;
+      const changes = {
+        ...rest,
+        ...(areaId !== undefined ? { lifeAreaId: areaId } : {}),
+      };
+      return (
+        (await run(async () => {
+          if (Object.keys(changes).length)
+            await api.project.update(id, changes);
+          if (notes !== undefined) await api.note.save("project", id, notes);
+          return true;
+        })) ?? false
+      );
+    },
+    [run],
+  );
+  const updateArea = useCallback(
+    async (id: string, patch: AreaPatch) => {
+      const { notes, title, ...rest } = patch;
+      const changes = {
+        ...rest,
+        ...(title !== undefined ? { name: title } : {}),
+      };
+      return (
+        (await run(async () => {
+          if (Object.keys(changes).length) await api.area.update(id, changes);
+          if (notes !== undefined) await api.note.save("area", id, notes);
+          return true;
+        })) ?? false
+      );
+    },
+    [run],
+  );
+  const deleteProject = useCallback(
+    async (id: string) => {
+      const saved = await run(async () => {
+        await api.project.remove(id);
+        return true;
+      });
+      if (saved)
+        setSelectedProjectId((previous) => (previous === id ? null : previous));
+      return saved ?? false;
+    },
+    [run],
+  );
+  const deleteArea = useCallback(
+    async (id: string) => {
+      const saved = await run(async () => {
+        await api.area.remove(id);
+        return true;
+      });
+      if (saved)
+        setSelectedAreaId((previous) => (previous === id ? null : previous));
+      return saved ?? false;
+    },
+    [run],
   );
 
-  const toggleTask = useCallback((dateISO: string, id: string) => {
-    setByDay((prev) => ({
-      ...prev,
-      [dateISO]: (prev[dateISO] ?? []).map((t) => {
-        if (t.id !== id) return t;
-        const status: TaskStatus = t.status === "done" ? "todo" : "done";
-        if (hydratedRef.current) fire(api.task.update(id, { status: toApiStatus(status) }));
-        return { ...t, status };
-      }),
-    }));
-  }, []);
+  const setSection = useCallback(
+    (next: Section) => {
+      void flushDrafts().then((ok) => {
+        if (ok) setSectionState(next);
+      });
+    },
+    [flushDrafts],
+  );
+  const openProject = useCallback(
+    (id: string | null) => {
+      void flushDrafts().then((ok) => {
+        if (ok) setSelectedProjectId(id);
+      });
+    },
+    [flushDrafts],
+  );
+  const openArea = useCallback(
+    (id: string | null) => {
+      void flushDrafts().then((ok) => {
+        if (ok) setSelectedAreaId(id);
+      });
+    },
+    [flushDrafts],
+  );
 
-  const moveTask = useCallback((sourceDate: string, targetDate: string, id: string, index?: number) => {
-    setByDay((prev) => {
-      const found = (prev[sourceDate] ?? []).find((t) => t.id === id);
-      if (!found) return prev;
-      // The planner bucket tracks the scheduled day.
-      const task = sourceDate === targetDate ? found : { ...found, scheduledDate: targetDate };
-      const sourceList = (prev[sourceDate] ?? []).filter((t) => t.id !== id);
-      const targetList = sourceDate === targetDate ? sourceList : [...(prev[targetDate] ?? [])];
-      const at = index == null ? targetList.length : Math.min(index, targetList.length);
-      targetList.splice(at, 0, task);
-      return { ...prev, [sourceDate]: sourceList, [targetDate]: targetList };
+  const openDetail = useCallback(
+    (ref: TaskRef) => {
+      void flushDrafts().then((ok) => {
+        if (ok) setDetail(ref);
+      });
+    },
+    [flushDrafts],
+  );
+  const closeDetail = useCallback(() => {
+    void flushDrafts().then((ok) => {
+      if (ok) setDetail(null);
     });
-    if (sourceDate !== targetDate && hydratedRef.current) {
-      fire(api.task.update(id, { scheduledDate: targetDate }));
-    }
-  }, []);
-
-  const updateTask = useCallback((dateISO: string, id: string, patch: TaskPatch) => {
-    if ("title" in patch && !patch.title?.trim()) return;
-    // Changing Scheduled to another day moves the task to that day's card.
-    const targetDate = "scheduledDate" in patch ? (patch.scheduledDate ?? undefined) : undefined;
-    setByDay((prev) => {
-      const task = (prev[dateISO] ?? []).find((t) => t.id === id);
-      if (!task) return prev;
-      if (targetDate && targetDate !== dateISO) {
-        const moved = { ...task, ...patch };
-        return {
-          ...prev,
-          [dateISO]: (prev[dateISO] ?? []).filter((t) => t.id !== id),
-          [targetDate]: [...(prev[targetDate] ?? []), moved],
-        };
-      }
-      return {
-        ...prev,
-        [dateISO]: (prev[dateISO] ?? []).map((t) => (t.id === id ? { ...t, ...patch } : t)),
-      };
-    });
-    if (targetDate && targetDate !== dateISO) {
-      setDetail((prev) =>
-        prev && prev.id === id && prev.dateISO === dateISO ? { dateISO: targetDate, id } : prev,
-      );
-    }
-    if (!hydratedRef.current) return;
-    const apiPatch: Record<string, unknown> = {};
-    if (patch.title !== undefined) apiPatch.title = patch.title;
-    if (patch.status !== undefined) apiPatch.status = toApiStatus(patch.status);
-    if (patch.priority !== undefined) apiPatch.priority = patch.priority;
-    if (patch.projectId !== undefined) apiPatch.projectId = patch.projectId;
-    if (patch.areaId !== undefined) apiPatch.lifeAreaId = patch.areaId;
-    if (patch.scheduledDate !== undefined) apiPatch.scheduledDate = patch.scheduledDate;
-    if (patch.dueDate !== undefined) apiPatch.dueDate = patch.dueDate;
-    if (patch.deadlineType !== undefined) apiPatch.deadlineType = patch.deadlineType;
-    if (patch.archived !== undefined) apiPatch.archived = patch.archived;
-    if (Object.keys(apiPatch).length > 0) fire(api.task.update(id, apiPatch));
-    if (patch.notes !== undefined) fire(api.note.save("task", id, patch.notes));
-  }, []);
-
-  const deleteTask = useCallback((dateISO: string, id: string) => {
-    setByDay((prev) => ({
-      ...prev,
-      [dateISO]: (prev[dateISO] ?? []).filter((t) => t.id !== id),
-    }));
-    if (hydratedRef.current) fire(api.task.remove(id));
-  }, []);
-
-  const addProject = useCallback((input: ProjectInput): string => {
-    const id = newId();
-    const item: ProjectItem = {
-      id,
-      title: input.title,
-      color: input.color ?? ITEM_COLORS[0],
-      icon: input.icon ?? "briefcase",
-      areaId: input.areaId ?? null,
-      status: input.status ?? "planned",
-      startDate: input.startDate ?? null,
-      targetDate: input.targetDate ?? null,
-      description: input.description ?? "",
-      notes: "",
-      archived: false,
-    };
-    setProjects((prev) => [...prev, item]);
-    fire(
-      api.project
-        .create({
-          title: input.title,
-          icon: item.icon,
-          color: item.color,
-          lifeAreaId: item.areaId,
-          status: item.status,
-          startDate: item.startDate,
-          targetDate: item.targetDate,
-          description: item.description,
-        })
-        .then((created) => {
-          if (created.id === id) return;
-          // The backend minted its own id: remap references.
-          setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, id: created.id } : p)));
-          setByDay((prev) => {
-            const out: ByDay = {};
-            for (const [day, tasks] of Object.entries(prev)) {
-              out[day] = tasks.map((t) =>
-                t.projectId === id ? { ...t, projectId: created.id } : t,
-              );
-            }
-            return out;
-          });
-          setSelectedProjectId((prev) => (prev === id ? created.id : prev));
-        }),
-    );
-    return id;
-  }, []);
-
-  const addArea = useCallback((input: AreaInput): string => {
-    const id = newId();
-    const item: AreaItem = {
-      id,
-      title: input.title,
-      color: input.color ?? "amber",
-      icon: input.icon ?? "compass",
-      description: input.description ?? "",
-      notes: "",
-    };
-    setAreas((prev) => [...prev, item]);
-    fire(
-      api.area
-        .create({
-          name: input.title,
-          icon: item.icon,
-          color: item.color,
-          description: item.description,
-        })
-        .then((created) => {
-          if (created.id === id) return;
-          setAreas((prev) => prev.map((a) => (a.id === id ? { ...a, id: created.id } : a)));
-          setByDay((prev) => {
-            const out: ByDay = {};
-            for (const [day, tasks] of Object.entries(prev)) {
-              out[day] = tasks.map((t) => (t.areaId === id ? { ...t, areaId: created.id } : t));
-            }
-            return out;
-          });
-          setProjects((prev) =>
-            prev.map((p) => (p.areaId === id ? { ...p, areaId: created.id } : p)),
-          );
-          setSelectedAreaId((prev) => (prev === id ? created.id : prev));
-        }),
-    );
-    return id;
-  }, []);
-
-  const updateProject = useCallback((id: string, patch: ProjectPatch) => {
-    if ("title" in patch && !patch.title?.trim()) return;
-    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-    if (!hydratedRef.current) return;
-    const apiPatch: Record<string, unknown> = {};
-    if (patch.title !== undefined) apiPatch.title = patch.title;
-    if (patch.description !== undefined) apiPatch.description = patch.description;
-    if (patch.areaId !== undefined) apiPatch.lifeAreaId = patch.areaId;
-    if (patch.status !== undefined) apiPatch.status = patch.status;
-    if (patch.icon !== undefined) apiPatch.icon = patch.icon;
-    if (patch.color !== undefined) apiPatch.color = patch.color;
-    if (patch.startDate !== undefined) apiPatch.startDate = patch.startDate;
-    if (patch.targetDate !== undefined) apiPatch.targetDate = patch.targetDate;
-    if (patch.archived !== undefined) apiPatch.archived = patch.archived;
-    if (Object.keys(apiPatch).length > 0) fire(api.project.update(id, apiPatch));
-    if (patch.notes !== undefined) fire(api.note.save("project", id, patch.notes));
-  }, []);
-
-  const updateArea = useCallback((id: string, patch: AreaPatch) => {
-    if ("title" in patch && !patch.title?.trim()) return;
-    setAreas((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
-    if (!hydratedRef.current) return;
-    const apiPatch: Record<string, unknown> = {};
-    if (patch.title !== undefined) apiPatch.name = patch.title;
-    if (patch.description !== undefined) apiPatch.description = patch.description;
-    if (patch.icon !== undefined) apiPatch.icon = patch.icon;
-    if (patch.color !== undefined) apiPatch.color = patch.color;
-    if (Object.keys(apiPatch).length > 0) fire(api.area.update(id, apiPatch));
-    if (patch.notes !== undefined) fire(api.note.save("area", id, patch.notes));
-  }, []);
-
-  /** Deleting unlinks the item from every task that references it. */
-  const deleteProject = useCallback((id: string) => {
-    setProjects((prev) => prev.filter((p) => p.id !== id));
-    setSelectedProjectId((prev) => (prev === id ? null : prev));
-    setByDay((prev) => {
-      const out: ByDay = {};
-      for (const [day, tasks] of Object.entries(prev)) {
-        out[day] = tasks.map((t) => (t.projectId === id ? { ...t, projectId: null } : t));
-      }
-      return out;
-    });
-    if (hydratedRef.current) fire(api.project.remove(id));
-  }, []);
-
-  const deleteArea = useCallback((id: string) => {
-    setAreas((prev) => prev.filter((a) => a.id !== id));
-    setSelectedAreaId((prev) => (prev === id ? null : prev));
-    setByDay((prev) => {
-      const out: ByDay = {};
-      for (const [day, tasks] of Object.entries(prev)) {
-        out[day] = tasks.map((t) => (t.areaId === id ? { ...t, areaId: null } : t));
-      }
-      return out;
-    });
-    setProjects((prev) => prev.map((p) => (p.areaId === id ? { ...p, areaId: null } : p)));
-    if (hydratedRef.current) fire(api.area.remove(id));
-  }, []);
-
-  const openProject = useCallback((id: string | null) => setSelectedProjectId(id), []);
-  const openArea = useCallback((id: string | null) => setSelectedAreaId(id), []);
-
-  const openDetail = useCallback((ref: TaskRef) => setDetail(ref), []);
-  const closeDetail = useCallback(() => setDetail(null), []);
+  }, [flushDrafts]);
 
   const value = useMemo<Store>(
     () => ({
@@ -711,6 +718,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       section,
       setSection,
       hydrated,
+      pending,
+      error,
+      reportError: report,
+      dismissError,
+      retryLoad,
+      flushDrafts,
+      registerDraft,
       byDay,
       addTask,
       toggleTask,
@@ -744,6 +758,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       section,
       setSection,
       hydrated,
+      pending,
+      error,
+      report,
+      dismissError,
+      retryLoad,
+      flushDrafts,
+      registerDraft,
       byDay,
       addTask,
       toggleTask,
@@ -768,7 +789,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+  return (
+    <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
+  );
 }
 
 export function useStore(): Store {

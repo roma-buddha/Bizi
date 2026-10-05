@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { DraftField } from "./DraftField";
 import {
   DEADLINE_LABELS,
   DEADLINE_TYPES,
@@ -23,7 +25,7 @@ function NamedSelect({
   value: string;
   items: { id: string; title: string }[];
   onChange: (id: string | null) => void;
-  onCreate: (title: string) => string;
+  onCreate: (title: string) => Promise<string | null>;
 }) {
   return (
     <label className="field">
@@ -34,7 +36,10 @@ function NamedSelect({
         onChange={(e) => {
           if (e.target.value === "__new__") {
             const title = window.prompt(`New ${label.toLowerCase()} name`);
-            if (title?.trim()) onChange(onCreate(title.trim()));
+            if (title?.trim())
+              void onCreate(title.trim()).then((id) => {
+                if (id) onChange(id);
+              });
           } else {
             onChange(e.target.value || null);
           }
@@ -53,8 +58,11 @@ function NamedSelect({
 }
 
 export function TaskDetailPanel() {
+  const [acting, setActing] = useState(false);
   const {
     detail,
+    pending,
+    flushDrafts,
     closeDetail,
     byDay,
     updateTask,
@@ -66,13 +74,19 @@ export function TaskDetailPanel() {
   } = useStore();
   if (!detail) return null;
 
-  const task = (byDay[detail.dateISO] ?? []).find((t) => t.id === detail.id) ?? null;
+  const task =
+    (byDay[detail.dateISO] ?? []).find((t) => t.id === detail.id) ?? null;
   if (!task) {
     return (
       <aside className="detail-panel" aria-label="Task details">
         <div className="detail-head">
           <h3>Task</h3>
-          <button className="detail-close" onClick={closeDetail} aria-label="Close details" title="Close">
+          <button
+            className="detail-close"
+            onClick={closeDetail}
+            aria-label="Close details"
+            title="Close"
+          >
             ×
           </button>
         </div>
@@ -81,29 +95,41 @@ export function TaskDetailPanel() {
     );
   }
 
-  const patch = (p: Parameters<typeof updateTask>[2]) => updateTask(detail.dateISO, task.id, p);
+  const patch = (p: Parameters<typeof updateTask>[2]) =>
+    updateTask(detail.dateISO, task.id, p);
 
-  const remove = () => {
+  const remove = async () => {
     if (!window.confirm(`Delete "${task.title}" permanently?`)) return;
-    deleteTask(detail.dateISO, task.id);
-    closeDetail();
+    setActing(true);
+    if ((await flushDrafts()) && (await deleteTask(detail.dateISO, task.id)))
+      closeDetail();
+    setActing(false);
   };
 
   return (
     <aside className="detail-panel" aria-label="Task details">
       <div className="detail-head">
         <h3>Task</h3>
-        <button className="detail-close" onClick={closeDetail} aria-label="Close details" title="Close">
+        <button
+          className="detail-close"
+          onClick={closeDetail}
+          aria-label="Close details"
+          title="Close"
+        >
           ×
         </button>
       </div>
-      <div className="detail-body">
+      <fieldset
+        className="detail-body edit-fields"
+        disabled={acting || pending > 0}
+      >
         <label className="field">
           <span className="field-label">Title</span>
-          <input
-            className="field-input"
+          <DraftField
+            key={task.id + ":title"}
+            draftKey={task.id + ":title"}
             value={task.title}
-            onChange={(e) => patch({ title: e.target.value })}
+            onSave={(title) => patch({ title })}
             autoFocus
           />
         </label>
@@ -178,7 +204,9 @@ export function TaskDetailPanel() {
           <select
             className="field-input"
             value={task.deadlineType}
-            onChange={(e) => patch({ deadlineType: e.target.value as DeadlineType })}
+            onChange={(e) =>
+              patch({ deadlineType: e.target.value as DeadlineType })
+            }
           >
             {DEADLINE_TYPES.map((d) => (
               <option key={d} value={d}>
@@ -189,23 +217,28 @@ export function TaskDetailPanel() {
         </label>
         <label className="field">
           <span className="field-label">Notes</span>
-          <textarea
-            className="field-input textarea"
-            rows={4}
+          <DraftField
+            key={task.id + ":notes"}
+            draftKey={task.id + ":notes"}
             value={task.notes}
+            onSave={(notes) => patch({ notes })}
+            multiline
+            className="field-input textarea"
             placeholder="Notes…"
-            onChange={(e) => patch({ notes: e.target.value })}
           />
         </label>
         <div className="detail-actions">
-          <button className="button ghost" onClick={() => patch({ archived: !task.archived })}>
+          <button
+            className="button ghost"
+            onClick={() => patch({ archived: !task.archived })}
+          >
             {task.archived ? "Unarchive" : "Archive"}
           </button>
           <button className="button danger" onClick={remove}>
             Delete
           </button>
         </div>
-      </div>
+      </fieldset>
     </aside>
   );
 }

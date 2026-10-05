@@ -1,119 +1,74 @@
 # Bizi
 
-A calm personal life organizer for Windows. Local-first Life OS: life areas, goals, projects, tasks, today, inbox, calendar, habits and reviews — all views over one shared local data model.
+A local Windows organizer built with Tauri 2, Rust, SQLite, React 19, TypeScript, and Vite. Desktop data stays in the app-data directory. No account or cloud service is required.
 
-No account, no server, no cloud. Your data lives in a local SQLite database.
+## Available interface
 
-## The idea
+- **To-Do:** scheduled tasks in day, week, month, year, and two-year views; overdue scheduled work; an Unscheduled group; archived-task recovery. Long views use 60-day pages.
+- **Projects:** cards, status board, timeline, tasks, notes, and archive recovery.
+- **Areas:** descriptions, linked projects, tasks, and notes.
+- **Life:** birth date/time, lifespan statistics, and a calendar in weeks or months.
+- **Settings:** local AI bridge status, port, credentials, and activity.
 
-Life is organized at several levels:
+Goals, habits, reviews, and search remain backend capabilities. Their dedicated interfaces, an Inbox page, a command palette, system theme, and the former keyboard shortcuts are not currently implemented. Recurrence is stored but is not expanded automatically.
 
-```text
-Life Area → Goal → Project → Task → Today
-```
+Tasks have separate scheduled and due dates. Moving a task changes its scheduled date and persisted position; it leaves the due date unchanged. Archived tasks and projects are recoverable through filters in their existing views.
 
-…but Bizi does not force this as a rigid tree. Relationships are flexible: goals belong to one life area; projects belong to a life area and can link to several goals; tasks can belong to a project, directly to an area, relate to a goal, or sit unclassified in the Inbox. There is **one task object** displayed in many places — complete it in Today and it is completed everywhere.
+## Persistence
 
-The interface follows progressive disclosure: simple lists first, full detail in a side panel or on the entity page. No crowded dashboard.
+Desktop data uses SQLite with WAL mode and foreign-key enforcement. Versioned migrations run transactionally. Upgrading an existing database to version 3 creates a consistent SQLite backup named `bizi-before-v3-<id>.db` beside the database before changing it. Migration 3 adds task order without deleting user records.
 
-## Sections
+The UI waits for confirmed writes, serializes mutations, and displays persistence errors. Titles and notes use a 400 ms debounce, flush on blur and in-app navigation, and retain failed drafts for retry. Closing the entire application with unsaved drafts is not a substitute for completing a save.
 
-| Section      | What it does                                                                               |
-| ------------ | ------------------------------------------------------------------------------------------ |
-| **Today**    | Tasks scheduled or due today, plus overdue and completed-today groups                      |
-| **Inbox**    | Fast capture with no classification required; process later (convert to task/project/goal) |
-| **Areas**    | Permanent life domains with Overview / Goals / Projects / Tasks / Notes tabs               |
-| **Goals**    | Desired outcomes with status, priority, dates, manual or automatic progress                |
-| **Projects** | Initiatives with tasks; list and board views over the same data                            |
-| **To-Do**    | All tasks with quick filters, attribute filters, sorting and search                        |
-| **Calendar** | Month view combining scheduled tasks, deadlines, projects and habits; drag to reschedule   |
-| **Habits**   | Repeated behaviors: today check-off, this-week grid, 12-week history                       |
-| **Reviews**  | Weekly / monthly / annual reflection with computed stats and writing fields                |
-| **Archive**  | Archived goals, projects, tasks and areas, restorable                                      |
-| **Settings** | Theme, data location, shortcuts                                                            |
+A workspace snapshot reads tasks, projects, areas, and notes in one request without a 500-task cutoff. External write events are coalesced and stale snapshot responses are discarded.
 
-Quick add (**Ctrl+N**) captures a task in seconds: title plus optional date, project and priority. The command palette (**Ctrl+K**) searches everything and jumps anywhere.
-
-## Task model
-
-Tasks support title, description, status (inbox / to do / in progress / waiting / completed / cancelled), life area, project, related goals, priority (P1–P4), **scheduled date** (when you plan to work on it), **due date** (when it must be done), deadline type (hard / soft / none), estimates, subtasks, recurrence rule (stored; scheduling stays manual in v1) and notes.
-
-The scheduled/due distinction is deliberate: dragging a task to another day in the calendar moves the scheduled date and never touches the due date.
-
-## Stack
-
-Tauri 2 / Rust for the native shell and validated SQLite access (rusqlite); React 19 / TypeScript / Vite for the interface. Design follows the Ohana principles from Lotus: cream/ink/warm-accent palette, light and charcoal themes, restrained serif display type, quiet lists instead of dashboards. Windows WebView2 is required.
-
-## Data
-
-The database is created at first launch in the Windows app-data directory (`bizi.db`, WAL mode) with versioned migrations and realistic sample data (business/research/health examples) so every feature is testable immediately. Sample data only appears in an empty database.
+Browser development uses a localStorage driver with matching validation and task movement. It uses separate browser data; it does not edit the desktop SQLite database.
 
 ## Local AI bridge
 
-When the desktop app is running, it serves a loopback-only HTTP API on `127.0.0.1` (default port 1421) so external agents — Kimi Work, scripts, anything on this machine — can read and modify Bizi data with text or voice commands. The bridge dispatches to the same validated command functions as the UI; external processes should never write `bizi.db` directly.
+The desktop app serves a loopback HTTP API on `127.0.0.1`, starting at port 1421. Settings shows the actual listening port if the configured one is busy.
 
-- `GET /health` — liveness probe (no auth)
-- `GET /schema` — machine-readable command catalog with `write` and `destructive` flags
-- `POST /invoke` — body `{ "cmd": string, "args": object }`; command names mirror the Tauri commands
+- `GET /health`: liveness, without authentication.
+- `GET /schema`: command catalog, including write/destructive flags.
+- `POST /invoke`: JSON `{ "cmd": "task_create", "args": { "input": { "title": "Example" } } }`.
 
-Every endpoint except `/health` requires `Authorization: Bearer <token>`. The token is generated on first run, stored next to the database (`bridge.token`), and shown under Settings → AI bridge, together with an enable toggle, port setting, and the activity log (`bridge.log`, last 50 entries). After each write the app emits a `bizi://data-changed` event, so open views refresh automatically.
+Except for health, requests require `Authorization: Bearer <token>`. The token is stored in `bridge.token`. Regeneration revokes the old credential for subsequent requests immediately. Successful mutations emit a data-changed event to the interface.
 
-```powershell
-python scripts/bridge_client.py health
-python scripts/bridge_client.py task_create '{\"input\": {\"title\": \"from the bridge\"}}'
-```
+The shared Rust layer validates supplied field types, titles, dates, enums, numeric ranges, and referenced records. Multi-statement task/project/goal changes roll back on failure. Invalid arguments return HTTP 400; unexpected execution failures return 500.
 
-Agents should fetch `/schema` first and confirm with the user before calling commands flagged `destructive` (currently `*_delete`).
+New commands:
 
-## Development
+- `workspace_snapshot`, with empty arguments: all tasks/projects/areas and their notes, including archived records.
+- `task_move`, with `{ "id": "...", "scheduledDate": "2030-01-01", "beforeId": null }`: move/reorder atomically. A null date makes a task unscheduled; a null anchor appends it. The anchor must be a different task in the destination bucket.
 
-Requires Node.js, Rust with the MSVC toolchain, Visual Studio C++ Build Tools, and Windows WebView2.
+Existing command names and successful response envelopes are preserved. `task_list` still defaults to 500 records; use the snapshot for the complete workspace. Fetch the schema before using the bridge, and confirm destructive actions before invoking deletion commands.
 
-```powershell
-git clone https://github.com/roma-buddha/Bizi.git bizi
-cd bizi
-npm ci
-npm run dev        # Tauri dev window
-```
+The stdlib Python client is in `scripts/bridge_client.py`. It can read the local token automatically. Configure `BIZI_BRIDGE_URL` when the bridge uses a different port.
 
-```sh
-npm run lint       # eslint, zero warnings allowed
-npm test           # vitest (frontend unit tests)
-npm run test:native# cargo test (schema & seed)
-npm run build      # type-check + production bundle
-npm run package:win# NSIS installer (unsigned)
-```
+## Development and builds
 
-`npm run dev:web` runs the frontend alone in a browser with a localStorage-backed data driver — useful for UI work without the Rust build. The desktop build always uses SQLite.
+Use Node 20.19+ in the 20.x line, or Node 22.12+. Desktop builds additionally require Rust/MSVC, Visual Studio C++ Build Tools, and WebView2.
 
-The NSIS installer is built in `src-tauri/target/release/bundle/nsis/`.
+`npm ci` installs the locked frontend dependencies.
 
-## Architecture
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Browser development server |
+| `npm run dev:web` | Browser development on port 1420 |
+| `npm run dev:desktop` | Tauri desktop development with incremental Rust builds |
+| `npm run build` | Type checking and production frontend bundle |
+| `npm run preview` | Serve the existing built dist output on port 7100 |
+| `npm run lint` | ESLint, zero warnings |
+| `npm test` | Frontend regression tests; fails if tests are absent |
+| `npm run test:native` | Locked native tests |
+| `npm run package:win -- -- --locked` | Release executable and NSIS installer |
 
-```text
-src/
-  models/      domain types, enums, constants
-  db/          API surface + Tauri driver + browser fallback driver
-  state/       route/theme/ui store, data-version refresh, useQuery
-  components/  shell (TopBar, Sidebar), TaskRow, TaskList, detail panel,
-               palette, quick add, shared UI primitives
-  features/    one file per section (Today, Inbox, Areas, Goals, Projects,
-               TodoList, Calendar, Habits, Reviews, Archive, Settings)
-  utils/       date math, progress calculation (+ unit tests)
-src-tauri/
-  src/db.rs        schema, migrations, seed (+ tests)
-  src/commands.rs  typed command handlers over SQLite
-  src/models.rs    serialized row types
-```
+The installer is written to `src-tauri/target/release/bundle/nsis/`. Use desktop development for iteration; release builds retain thin LTO and a single code-generation unit.
 
-UI never talks SQL; it calls the typed `api` surface (Tauri commands in the app, an equivalent local driver in the browser). All views read the same tables, so edits propagate everywhere through a single data-version refresh.
+## Verification and CI
 
-## Version 1 scope
+Frontend tests cover browser persistence, validation, persisted IDs/order, failed writes, snapshots above 500 tasks, queued refreshes, draft debounce/retry, date conversion, and planner pagination. Native tests use foreign-key enforcement and cover transactional relationships, input rejection, movement, snapshot completeness, migration/backup preservation, and authenticated HTTP requests including token rotation.
 
-Included: areas, goals, projects, tasks, today, inbox, calendar (month), habits, basic weekly/monthly/annual review, search + command palette, local SQLite, archive, light/dark/system themes, keyboard shortcuts.
+Windows validation runs lint, frontend tests/build, formatting, and native tests. Rust dependencies are cached. The separate Windows installer workflow runs manually or on version tags and uploads an installer artifact; it does not publish a release.
 
-Deliberately deferred: AI assistant, cloud sync, email integration, external calendar sync, attachments/files, Gantt and the multi-year Roadmap view, notifications, mobile. Recurrence is stored but not yet expanded automatically.
-
-## Status
-
-0.1 — core system implemented and verified (type-check, lint, vitest, cargo test, production build). Built as a sibling of [Lotus](https://github.com/roma-buddha/lotus-notes) with the same engineering discipline: strict TypeScript, layered architecture, Windows CI.
+Automated checks do not establish that an installer was installed and exercised. Release verification must separately check Windows installation/startup, window controls, HTML drag-and-drop, persistence after restart, recovery views, and bridge enable/disable/port changes.

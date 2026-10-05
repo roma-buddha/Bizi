@@ -22,8 +22,14 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ITEM_COLORS } from "../state/store";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { ITEM_COLORS, useStore } from "../state/store";
 
 const ENTITY_ICON_MAP: Record<string, LucideIcon> = {
   briefcase: Briefcase,
@@ -44,20 +50,43 @@ const ENTITY_ICON_MAP: Record<string, LucideIcon> = {
   compass: Compass,
 };
 
-export function EntityIcon({ name, size = 15 }: { name: string; size?: number }) {
+export function EntityIcon({
+  name,
+  size = 15,
+}: {
+  name: string;
+  size?: number;
+}) {
   const Cmp = ENTITY_ICON_MAP[name] ?? Compass;
   return <Cmp size={size} strokeWidth={1.8} aria-hidden />;
 }
 
 export function ProgressBar({ value }: { value: number }) {
   return (
-    <span className="progress" role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={100}>
-      <span className="progress-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+    <span
+      className="progress"
+      role="progressbar"
+      aria-valuenow={value}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <span
+        className="progress-fill"
+        style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+      />
     </span>
   );
 }
 
-export function EmptyState({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
+export function EmptyState({
+  title,
+  hint,
+  action,
+}: {
+  title: string;
+  hint?: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="empty-state">
       <p className="empty-title">{title}</p>
@@ -76,6 +105,7 @@ export function Tabs({
   active: string;
   onChange: (id: string) => void;
 }) {
+  const { flushDrafts } = useStore();
   return (
     <div className="tabs" role="tablist">
       {tabs.map((tab) => (
@@ -84,7 +114,11 @@ export function Tabs({
           role="tab"
           aria-selected={active === tab.id}
           className={`tab${active === tab.id ? " active" : ""}`}
-          onClick={() => onChange(tab.id)}
+          onClick={() => {
+            void flushDrafts().then((ok) => {
+              if (ok) onChange(tab.id);
+            });
+          }}
         >
           {tab.label}
         </button>
@@ -112,8 +146,16 @@ export function Modal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={width ? { width } : undefined} role="dialog" aria-label={title}>
+    <div
+      className="modal-backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="modal"
+        style={width ? { width } : undefined}
+        role="dialog"
+        aria-label={title}
+      >
         <div className="modal-head">
           <h3>{title}</h3>
           <button className="icon-button" onClick={onClose} aria-label="Close">
@@ -172,7 +214,11 @@ export function SelectField({
   return (
     <label className="field">
       <span className="field-label">{label}</span>
-      <select className="field-input" value={value} onChange={(e) => onChange(e.target.value)}>
+      <select
+        className="field-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
@@ -263,7 +309,9 @@ export function SectionTitle({ children }: { children: ReactNode }) {
 export type BucketCols = 3 | 2 | 1;
 
 /** Density preference, persisted per page. */
-export function useBucketCols(storageKey: string): [BucketCols, (cols: BucketCols) => void] {
+export function useBucketCols(
+  storageKey: string,
+): [BucketCols, (cols: BucketCols) => void] {
   const [cols, setCols] = useState<BucketCols>(() => {
     const saved = Number(localStorage.getItem(storageKey));
     return saved === 1 || saved === 2 ? (saved as BucketCols) : 3;
@@ -279,11 +327,12 @@ export function useBucketCols(storageKey: string): [BucketCols, (cols: BucketCol
   return [cols, set];
 }
 
-const DENSITY_OPTIONS: { value: BucketCols; icon: ReactNode; label: string }[] = [
-  { value: 3, icon: <Columns3 size={15} />, label: "Three per row" },
-  { value: 2, icon: <Columns2 size={15} />, label: "Two per row" },
-  { value: 1, icon: <Square size={15} />, label: "One per row" },
-];
+const DENSITY_OPTIONS: { value: BucketCols; icon: ReactNode; label: string }[] =
+  [
+    { value: 3, icon: <Columns3 size={15} />, label: "Three per row" },
+    { value: 2, icon: <Columns2 size={15} />, label: "Two per row" },
+    { value: 1, icon: <Square size={15} />, label: "One per row" },
+  ];
 
 export function BucketDensityToggle({
   value,
@@ -335,7 +384,8 @@ export function SelectMenu({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);

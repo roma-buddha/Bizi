@@ -1,3 +1,4 @@
+import { DraftField } from "../components/DraftField";
 import { ArrowLeft, Columns2, Columns3, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
@@ -54,15 +55,23 @@ function TaskRows({ tasks }: { tasks: FlatTask[] }) {
   return (
     <div className="agenda-rows">
       {tasks.map(({ task, dateISO }) => (
-        <div key={task.id} className={`agenda-row${task.status === "done" ? " completed" : ""}`}>
+        <div
+          key={task.id}
+          className={`agenda-row${task.status === "done" ? " completed" : ""}`}
+        >
           <input
             type="checkbox"
             className="task-checkbox"
             checked={task.status === "done"}
-            aria-label={task.status === "done" ? "Mark as not done" : "Mark as done"}
+            aria-label={
+              task.status === "done" ? "Mark as not done" : "Mark as done"
+            }
             onChange={() => toggleTask(dateISO, task.id)}
           />
-          <button className="agenda-title" onClick={() => openDetail({ dateISO, id: task.id })}>
+          <button
+            className="agenda-title"
+            onClick={() => openDetail({ dateISO, id: task.id })}
+          >
             {task.title}
           </button>
           <span className="entity-task-day">
@@ -92,10 +101,15 @@ function AreaModal({ onClose }: { onClose: () => void }) {
   const [icon, setIcon] = useState("briefcase");
   const [color, setColor] = useState("amber");
 
-  const create = () => {
+  const [saving, setSaving] = useState(false);
+  const create = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const id = addArea({ title: trimmed, icon, color });
+    if (saving) return;
+    setSaving(true);
+    const id = await addArea({ title: trimmed, icon, color });
+    setSaving(false);
+    if (!id) return;
     setName("");
     onClose();
     openArea(id);
@@ -103,7 +117,13 @@ function AreaModal({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal title="New life area" onClose={onClose} width={420}>
-      <TextField label="Name" value={name} onChange={setName} autoFocus onEnter={create} />
+      <TextField
+        label="Name"
+        value={name}
+        onChange={setName}
+        autoFocus
+        onEnter={create}
+      />
       <div className="field-label">Icon</div>
       <IconPicker value={icon} onChange={setIcon} />
       <div className="field-label">Color</div>
@@ -112,7 +132,11 @@ function AreaModal({ onClose }: { onClose: () => void }) {
         <button className="button ghost" onClick={onClose}>
           Cancel
         </button>
-        <button className="button primary" disabled={!name.trim()} onClick={create}>
+        <button
+          className="button primary"
+          disabled={saving || !name.trim()}
+          onClick={create}
+        >
           Create
         </button>
       </div>
@@ -121,11 +145,21 @@ function AreaModal({ onClose }: { onClose: () => void }) {
 }
 
 function AreaDetailPage({ area }: { area: AreaItem }) {
-  const { projects, updateArea, deleteArea, openArea, setSection, openProject } = useStore();
+  const {
+    projects,
+    updateArea,
+    deleteArea,
+    flushDrafts,
+    openArea,
+    setSection,
+    openProject,
+  } = useStore();
   const flat = useFlatTasks();
   const [tab, setTab] = useState("overview");
 
-  const areaProjects = projects.filter((p) => p.areaId === area.id && !p.archived);
+  const areaProjects = projects.filter(
+    (p) => p.areaId === area.id && !p.archived,
+  );
   const areaTasks = flat.filter(({ task }) => task.areaId === area.id);
   const activeTasks = areaTasks.filter(({ task }) => task.status !== "done");
   const upcoming = activeTasks
@@ -133,10 +167,15 @@ function AreaDetailPage({ area }: { area: AreaItem }) {
     .sort((a, b) => (a.task.scheduledDate! < b.task.scheduledDate! ? -1 : 1))
     .slice(0, 5);
 
-  const remove = () => {
-    if (!window.confirm(`Delete area "${area.title}"? Projects and tasks keep their data.`)) return;
-    deleteArea(area.id);
-    openArea(null);
+  const remove = async () => {
+    if (
+      !window.confirm(
+        `Delete area "${area.title}"? Projects and tasks keep their data.`,
+      )
+    )
+      return;
+    if (!(await flushDrafts())) return;
+    if (await deleteArea(area.id)) openArea(null);
   };
 
   return (
@@ -148,28 +187,25 @@ function AreaDetailPage({ area }: { area: AreaItem }) {
             <EntityIcon name={area.icon} size={20} />
           </span>
           <div>
-            <h1
-              contentEditable
-              suppressContentEditableWarning
-              onBlur={(e) => {
-                const title = e.currentTarget.textContent?.trim();
-                if (title && title !== area.title) updateArea(area.id, { title });
-              }}
-            >
-              {area.title}
+            <h1>
+              <DraftField
+                key={area.id + ":title"}
+                draftKey={area.id + ":title"}
+                className="entity-title-input"
+                label="Title"
+                value={area.title}
+                onSave={(title) => updateArea(area.id, { title })}
+              />
             </h1>
-            <p
-              className="page-subtitle"
-              contentEditable
-              suppressContentEditableWarning
-              data-placeholder="Add a short description…"
-              onBlur={(e) => {
-                const description = e.currentTarget.textContent?.trim() ?? "";
-                if (description !== area.description) updateArea(area.id, { description });
-              }}
-            >
-              {area.description}
-            </p>
+            <DraftField
+              key={area.id + ":description"}
+              draftKey={area.id + ":description"}
+              className="entity-description-input"
+              label="Description"
+              value={area.description}
+              placeholder="Add a short description…"
+              onSave={(description) => updateArea(area.id, { description })}
+            />
           </div>
         </div>
         <button className="button ghost" onClick={remove}>
@@ -252,12 +288,15 @@ function AreaDetailPage({ area }: { area: AreaItem }) {
       ) : null}
 
       {tab === "notes" ? (
-        <textarea
+        <DraftField
+          key={area.id + ":notes"}
+          draftKey={area.id + ":notes"}
+          multiline
           className="field-input textarea notes-editor"
           rows={10}
           placeholder={`Notes about ${area.title}…`}
           value={area.notes}
-          onChange={(e) => updateArea(area.id, { notes: e.target.value })}
+          onSave={(notes) => updateArea(area.id, { notes })}
         />
       ) : null}
     </div>
@@ -293,7 +332,10 @@ export function AreasPage() {
           title="No life areas yet."
           hint="Areas are the broadest level: Business, Health, Research…"
           action={
-            <button className="button primary" onClick={() => setCreating(true)}>
+            <button
+              className="button primary"
+              onClick={() => setCreating(true)}
+            >
               Create Area
             </button>
           }
@@ -301,12 +343,18 @@ export function AreasPage() {
       ) : (
         <div className="area-grid" style={densityStyle(cols)}>
           {areas.map((area) => {
-            const areaProjects = projects.filter((p) => p.areaId === area.id && !p.archived).length;
+            const areaProjects = projects.filter(
+              (p) => p.areaId === area.id && !p.archived,
+            ).length;
             const openTasks = flat.filter(
               ({ task }) => task.areaId === area.id && task.status !== "done",
             ).length;
             return (
-              <button key={area.id} className="area-card" onClick={() => openArea(area.id)}>
+              <button
+                key={area.id}
+                className="area-card"
+                onClick={() => openArea(area.id)}
+              >
                 <span className="area-card-icon" data-color={area.color}>
                   <EntityIcon name={area.icon} size={18} />
                 </span>
@@ -339,11 +387,14 @@ function ProjectModal({
   const { addProject, updateProject, areas } = useStore();
   const [title, setTitle] = useState(initial?.title ?? "");
   const [areaId, setAreaId] = useState(initial?.areaId ?? "");
-  const [status, setStatus] = useState<ProjectStatus>(initial?.status ?? "planned");
+  const [status, setStatus] = useState<ProjectStatus>(
+    initial?.status ?? "planned",
+  );
   const [startDate, setStartDate] = useState(initial?.startDate ?? null);
   const [targetDate, setTargetDate] = useState(initial?.targetDate ?? null);
 
-  const save = () => {
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
     const trimmed = title.trim();
     if (!trimmed) return;
     const payload = {
@@ -353,14 +404,28 @@ function ProjectModal({
       startDate,
       targetDate,
     };
-    if (initial) updateProject(initial.id, payload);
-    else addProject(payload);
-    onClose();
+    if (saving) return;
+    setSaving(true);
+    const saved = initial
+      ? await updateProject(initial.id, payload)
+      : await addProject(payload);
+    setSaving(false);
+    if (saved) onClose();
   };
 
   return (
-    <Modal title={initial ? "Edit project" : "New project"} onClose={onClose} width={440}>
-      <TextField label="Title" value={title} onChange={setTitle} autoFocus onEnter={save} />
+    <Modal
+      title={initial ? "Edit project" : "New project"}
+      onClose={onClose}
+      width={440}
+    >
+      <TextField
+        label="Title"
+        value={title}
+        onChange={setTitle}
+        autoFocus
+        onEnter={save}
+      />
       <div className="field-grid">
         <SelectField
           label="Life area"
@@ -375,18 +440,33 @@ function ProjectModal({
           label="Status"
           value={status}
           onChange={(v) => setStatus(v as ProjectStatus)}
-          options={PROJECT_STATUSES.map((s) => ({ value: s, label: PROJECT_STATUS_LABELS[s] }))}
+          options={PROJECT_STATUSES.map((s) => ({
+            value: s,
+            label: PROJECT_STATUS_LABELS[s],
+          }))}
         />
       </div>
       <div className="field-grid">
-        <DateField label="Start date" value={startDate} onChange={setStartDate} />
-        <DateField label="Target date" value={targetDate} onChange={setTargetDate} />
+        <DateField
+          label="Start date"
+          value={startDate}
+          onChange={setStartDate}
+        />
+        <DateField
+          label="Target date"
+          value={targetDate}
+          onChange={setTargetDate}
+        />
       </div>
       <div className="detail-actions">
         <button className="button ghost" onClick={onClose}>
           Cancel
         </button>
-        <button className="button primary" disabled={!title.trim()} onClick={save}>
+        <button
+          className="button primary"
+          disabled={saving || !title.trim()}
+          onClick={save}
+        >
           Save
         </button>
       </div>
@@ -408,8 +488,7 @@ function ProjectDetailPage({ project }: { project: ProjectItem }) {
     deleteProject,
     openProject,
     addTask,
-    deleteTask,
-    byDay,
+    flushDrafts,
   } = useStore();
   const flat = useFlatTasks();
   const [tab, setTab] = useState("tasks");
@@ -418,30 +497,38 @@ function ProjectDetailPage({ project }: { project: ProjectItem }) {
 
   const projectTasks = flat.filter(({ task }) => task.projectId === project.id);
   const openTasks = projectTasks.filter(({ task }) => task.status !== "done");
-  const completedTasks = projectTasks.filter(({ task }) => task.status === "done");
+  const completedTasks = projectTasks.filter(
+    ({ task }) => task.status === "done",
+  );
   const progress = progressOf(project.id, flat);
   const area = areas.find((a) => a.id === project.areaId) ?? null;
 
-  const addTaskToProject = () => {
+  const addTaskToProject = async () => {
     const trimmed = newTask.trim();
     if (!trimmed) return;
-    addTask(todayISO(), trimmed, { projectId: project.id, areaId: project.areaId });
-    setNewTask("");
+    if (
+      await addTask(todayISO(), trimmed, {
+        projectId: project.id,
+        areaId: project.areaId,
+      })
+    )
+      setNewTask("");
   };
 
-  const archive = () => {
-    updateProject(project.id, { archived: !project.archived });
-    if (!project.archived) openProject(null);
+  const archive = async () => {
+    if (!(await flushDrafts())) return;
+    if (
+      (await updateProject(project.id, { archived: !project.archived })) &&
+      !project.archived
+    )
+      openProject(null);
   };
 
-  const remove = () => {
-    if (!window.confirm(`Delete project "${project.title}" and all its tasks?`)) return;
-    for (const [day, tasks] of Object.entries(byDay)) {
-      for (const t of tasks) {
-        if (t.projectId === project.id) deleteTask(day, t.id);
-      }
-    }
-    deleteProject(project.id);
+  const remove = async () => {
+    if (!window.confirm(`Delete project "${project.title}" and all its tasks?`))
+      return;
+    if (!(await flushDrafts())) return;
+    if (!(await deleteProject(project.id))) return;
     openProject(null);
   };
 
@@ -454,19 +541,21 @@ function ProjectDetailPage({ project }: { project: ProjectItem }) {
             <EntityIcon name={project.icon} size={20} />
           </span>
           <div>
-            <h1
-              contentEditable
-              suppressContentEditableWarning
-              onBlur={(e) => {
-                const title = e.currentTarget.textContent?.trim();
-                if (title && title !== project.title) updateProject(project.id, { title });
-              }}
-            >
-              {project.title}
+            <h1>
+              <DraftField
+                key={project.id + ":title"}
+                draftKey={project.id + ":title"}
+                className="entity-title-input"
+                label="Title"
+                value={project.title}
+                onSave={(title) => updateProject(project.id, { title })}
+              />
             </h1>
             <p className="page-subtitle">
               {area ? area.title : "No area"}
-              {project.targetDate ? ` · Target ${numericDate(project.targetDate)}` : ""}
+              {project.targetDate
+                ? ` · Target ${numericDate(project.targetDate)}`
+                : ""}
             </p>
           </div>
         </div>
@@ -503,7 +592,11 @@ function ProjectDetailPage({ project }: { project: ProjectItem }) {
                 if (e.key === "Enter") addTaskToProject();
               }}
             />
-            <button className="button primary" disabled={!newTask.trim()} onClick={addTaskToProject}>
+            <button
+              className="button primary"
+              disabled={!newTask.trim()}
+              onClick={addTaskToProject}
+            >
               Add
             </button>
           </div>
@@ -546,8 +639,13 @@ function ProjectDetailPage({ project }: { project: ProjectItem }) {
               <SelectField
                 label="Status"
                 value={project.status}
-                onChange={(v) => updateProject(project.id, { status: v as ProjectStatus })}
-                options={PROJECT_STATUSES.map((s) => ({ value: s, label: PROJECT_STATUS_LABELS[s] }))}
+                onChange={(v) =>
+                  updateProject(project.id, { status: v as ProjectStatus })
+                }
+                options={PROJECT_STATUSES.map((s) => ({
+                  value: s,
+                  label: PROJECT_STATUS_LABELS[s],
+                }))}
               />
               <span />
             </div>
@@ -576,16 +674,21 @@ function ProjectDetailPage({ project }: { project: ProjectItem }) {
       ) : null}
 
       {tab === "notes" ? (
-        <textarea
+        <DraftField
+          key={project.id + ":notes"}
+          draftKey={project.id + ":notes"}
+          multiline
           className="field-input textarea notes-editor"
           rows={10}
           placeholder={`Notes about ${project.title}…`}
           value={project.notes}
-          onChange={(e) => updateProject(project.id, { notes: e.target.value })}
+          onSave={(notes) => updateProject(project.id, { notes })}
         />
       ) : null}
 
-      {editing ? <ProjectModal onClose={() => setEditing(false)} initial={project} /> : null}
+      {editing ? (
+        <ProjectModal onClose={() => setEditing(false)} initial={project} />
+      ) : null}
     </div>
   );
 }
@@ -603,28 +706,40 @@ export function ProjectsPage() {
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<ProjectsView>("cards");
   const [cols, setCols] = useBucketCols("bizi.grid-cols.projects");
-  const [statusFilter, setStatusFilter] = useState<ProjectStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<ProjectStatus | "all">(
+    "all",
+  );
   const [areaFilter, setAreaFilter] = useState("");
+  const [archived, setArchived] = useState(false);
   const flat = useFlatTasks();
 
   const selected = projects.find((p) => p.id === selectedProjectId) ?? null;
   if (selected) return <ProjectDetailPage project={selected} />;
 
   const filtered = projects.filter((p) => {
-    if (p.archived) return false;
+    if (p.archived !== archived) return false;
     if (statusFilter !== "all" && p.status !== statusFilter) return false;
     if (areaFilter && p.areaId !== areaFilter) return false;
     return true;
   });
 
-  const densityIcon = cols === 3 ? <Columns3 size={14} /> : cols === 2 ? <Columns2 size={14} /> : <Square size={14} />;
+  const densityIcon =
+    cols === 3 ? (
+      <Columns3 size={14} />
+    ) : cols === 2 ? (
+      <Columns2 size={14} />
+    ) : (
+      <Square size={14} />
+    );
 
   return (
     <div className="page wide">
       <header className="page-header with-action">
         <div>
           <h1>Projects</h1>
-          <p className="page-subtitle">Temporary initiatives with a desired outcome.</p>
+          <p className="page-subtitle">
+            Temporary initiatives with a desired outcome.
+          </p>
         </div>
         <div className="header-actions">
           <div className="chip-group">
@@ -658,11 +773,20 @@ export function ProjectsPage() {
       </header>
 
       <div className="filter-bar">
+        <button
+          className={`button small${archived ? " primary" : " ghost"}`}
+          onClick={() => setArchived(!archived)}
+        >
+          {archived ? "Show active projects" : "Archived projects"}
+        </button>
         <SelectMenu
           value={statusFilter}
           options={[
             { value: "all", label: "Status" },
-            ...PROJECT_STATUSES.map((s) => ({ value: s, label: PROJECT_STATUS_LABELS[s] })),
+            ...PROJECT_STATUSES.map((s) => ({
+              value: s,
+              label: PROJECT_STATUS_LABELS[s],
+            })),
           ]}
           onChange={(v) => setStatusFilter(v as ProjectStatus | "all")}
           ariaLabel="Filter by status"
@@ -682,7 +806,10 @@ export function ProjectsPage() {
         <EmptyState
           title="No projects here."
           action={
-            <button className="button primary" onClick={() => setCreating(true)}>
+            <button
+              className="button primary"
+              onClick={() => setCreating(true)}
+            >
               Create Project
             </button>
           }
@@ -694,17 +821,27 @@ export function ProjectsPage() {
       ) : (
         <div className="area-grid" style={densityStyle(cols)}>
           {filtered.map((project) => {
-            const tasks = flat.filter(({ task }) => task.projectId === project.id);
-            const open = tasks.filter(({ task }) => task.status !== "done").length;
+            const tasks = flat.filter(
+              ({ task }) => task.projectId === project.id,
+            );
+            const open = tasks.filter(
+              ({ task }) => task.status !== "done",
+            ).length;
             return (
-              <button key={project.id} className="area-card" onClick={() => openProject(project.id)}>
+              <button
+                key={project.id}
+                className="area-card"
+                onClick={() => openProject(project.id)}
+              >
                 <span className="area-card-icon" data-color={project.color}>
                   <EntityIcon name={project.icon} size={18} />
                 </span>
                 <span className="area-card-name">{project.title}</span>
                 <span className="area-card-meta">
                   {PROJECT_STATUS_LABELS[project.status]} · {open} open tasks
-                  {project.targetDate ? ` · Target ${numericDate(project.targetDate)}` : ""}
+                  {project.targetDate
+                    ? ` · Target ${numericDate(project.targetDate)}`
+                    : ""}
                 </span>
               </button>
             );

@@ -5,6 +5,163 @@ use tauri::{AppHandle, Manager};
 
 use crate::db::{new_id, now_iso, today, AppState};
 use crate::models::*;
+use crate::validation;
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    fn database() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        crate::db::migrate(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn project_links_use_goal_then_project_and_replace_atomically() {
+        let conn = database();
+        let goal = goal_create_impl(&conn, json!({"title":"goal"})).unwrap();
+        let project = project_create_impl(&conn, json!({"title":"project"})).unwrap();
+        project_update_impl(&conn, project.id.clone(), json!({"goalIds":[goal.id]})).unwrap();
+        assert_eq!(
+            get_project(&conn, &project.id).unwrap().goal_ids,
+            vec![goal.id.clone()]
+        );
+        conn.execute_batch("CREATE TRIGGER fail_link BEFORE INSERT ON goal_projects BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
+        assert!(project_update_impl(
+            &conn,
+            project.id.clone(),
+            json!({"title":"changed", "goalIds":[goal.id]})
+        )
+        .is_err());
+        let saved = get_project(&conn, &project.id).unwrap();
+        assert_eq!(saved.title, "project");
+        assert_eq!(saved.goal_ids, vec![goal.id.clone()]);
+        assert!(goal_update_impl(
+            &conn,
+            goal.id.clone(),
+            json!({"title":"changed", "projectIds":[project.id]})
+        )
+        .is_err());
+        let saved_goal = get_goal(&conn, &goal.id).unwrap();
+        assert_eq!(saved_goal.title, "goal");
+        assert_eq!(saved_goal.project_ids, vec![project.id]);
+    }
+
+    #[test]
+    fn creation_preserves_completion_and_archive_metadata() {
+        let conn = database();
+        let input = json!({"title":"completed", "status":"completed", "archived":true});
+        let task = task_create_impl(&conn, input.clone()).unwrap();
+        let goal = goal_create_impl(&conn, input.clone()).unwrap();
+        let project = project_create_impl(&conn, input).unwrap();
+        assert!(task.completed_at.is_some() && task.archived);
+        assert!(goal.completed_at.is_some() && goal.archived);
+        assert!(project.completed_at.is_some() && project.archived);
+    }
+
+    #[test]
+    fn failed_creation_and_invalid_patch_preserve_data() {
+        let conn = database();
+        let before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0))
+            .unwrap();
+        assert!(task_create_impl(&conn, json!({"title":"task", "goalIds":["missing"]})).is_err());
+        let after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, after);
+        let goal = goal_create_impl(&conn, json!({"title":"goal"})).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_task_link BEFORE INSERT ON task_goals BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
+        assert!(task_create_impl(&conn, json!({"title":"partial", "goalIds":[goal.id]})).is_err());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            before
+        );
+        let task = task_create_impl(&conn, json!({"title":"original"})).unwrap();
+        for patch in [
+            json!({"title":" "}),
+            json!({"status":"bogus"}),
+            json!({"dueDate":"2026-02-30"}),
+            json!({"estimatedMinutes":-1}),
+            json!({"archived":"true"}),
+            json!({"sortOrder":1}),
+        ] {
+            assert!(task_update_impl(&conn, task.id.clone(), patch).is_err());
+        }
+        assert_eq!(get_task(&conn, &task.id).unwrap().title, "original");
+        task_update_impl(
+            &conn,
+            task.id.clone(),
+            json!({"scheduledDate":null, "estimatedMinutes":null}),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn moving_tasks_preserves_due_dates_and_rejects_wrong_bucket_anchor() {
+        let conn = database();
+        let a = task_create_impl(
+            &conn,
+            json!({"title":"a", "scheduledDate":"2030-01-01", "dueDate":"2030-01-05"}),
+        )
+        .unwrap();
+        let b =
+            task_create_impl(&conn, json!({"title":"b", "scheduledDate":"2030-01-01"})).unwrap();
+        task_move_impl(
+            &conn,
+            b.id.clone(),
+            Some("2030-01-01".into()),
+            Some(a.id.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            bucket_ids(&conn, &Some("2030-01-01".into()), "").unwrap(),
+            vec![b.id.clone(), a.id.clone()]
+        );
+        assert!(task_move_impl(&conn, a.id.clone(), None, Some(b.id)).is_err());
+        assert_eq!(
+            get_task(&conn, &a.id).unwrap().scheduled_date.as_deref(),
+            Some("2030-01-01")
+        );
+        task_update_impl(&conn, a.id.clone(), json!({"scheduledDate":null})).unwrap();
+        let saved = get_task(&conn, &a.id).unwrap();
+        assert_eq!(saved.scheduled_date, None);
+        assert_eq!(saved.due_date.as_deref(), Some("2030-01-05"));
+    }
+
+    #[test]
+    fn snapshot_has_no_five_hundred_record_cutoff() {
+        let conn = database();
+        let tx = conn.unchecked_transaction().unwrap();
+        for n in 0..510 {
+            tx.execute(
+                "INSERT INTO tasks(id,title,created_at,updated_at) VALUES (?1,'task','now','now')",
+                params![format!("bulk-{n}")],
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+        assert!(
+            workspace_snapshot_impl(&conn).unwrap()["tasks"]
+                .as_array()
+                .unwrap()
+                .len()
+                > 500
+        );
+        assert_eq!(
+            task_list_impl(
+                &conn,
+                Some(json!({"includeArchived":true,"excludeStatuses":[]}))
+            )
+            .unwrap()
+            .len(),
+            500
+        );
+    }
+}
 
 type CmdResult<T> = Result<T, String>;
 
@@ -27,7 +184,15 @@ fn opt_i64(v: &Value, key: &str) -> Option<i64> {
 }
 
 fn required_string(v: &Value, key: &str) -> CmdResult<String> {
-    opt_string(v, key).ok_or_else(|| format!("missing field: {}", key))
+    opt_string(v, key)
+        .map(|s| {
+            if key == "title" || key == "name" {
+                s.trim().to_string()
+            } else {
+                s
+            }
+        })
+        .ok_or_else(|| format!("validation: missing field: {}", key))
 }
 
 fn split_ids(raw: Option<String>) -> Vec<String> {
@@ -61,7 +226,11 @@ fn apply_patch(
     for (key, col) in allowed {
         if let Some(v) = obj.get(*key) {
             sets.push(format!("{} = ?", col));
-            vals.push(value_to_sql(v));
+            vals.push(if *key == "title" || *key == "name" {
+                Box::new(v.as_str().unwrap().trim().to_string())
+            } else {
+                value_to_sql(v)
+            });
         }
     }
     if sets.is_empty() {
@@ -118,6 +287,8 @@ pub fn area_list(
 }
 
 pub(crate) fn area_create_impl(conn: &Connection, input: Value) -> CmdResult<AreaRow> {
+    validation::input(conn, "area", &input, true)?;
+
     let id = new_id();
     let name = required_string(&input, "name")?;
     let now = now_iso();
@@ -129,7 +300,7 @@ pub(crate) fn area_create_impl(conn: &Connection, input: Value) -> CmdResult<Are
         )
         .map_err(err)?;
     conn.execute(
-        "INSERT INTO life_areas (id, name, description, icon, color, sort_order, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?7)",
+        "INSERT INTO life_areas (id, name, description, icon, color, sort_order, created_at, updated_at, archived) VALUES (?1,?2,?3,?4,?5,?6,?7,?7,?8)",
         params![
             id,
             name,
@@ -137,7 +308,8 @@ pub(crate) fn area_create_impl(conn: &Connection, input: Value) -> CmdResult<Are
             opt_string(&input, "icon").unwrap_or_default(),
             opt_string(&input, "color").unwrap_or_default(),
             opt_i64(&input, "sortOrder").unwrap_or(max_order + 1),
-            now
+            now,
+            input.get("archived").and_then(Value::as_bool).unwrap_or(false)
         ],
     )
     .map_err(err)?;
@@ -150,7 +322,10 @@ pub(crate) fn area_create_impl(conn: &Connection, input: Value) -> CmdResult<Are
         sort_order: opt_i64(&input, "sortOrder").unwrap_or(max_order + 1),
         created_at: now.clone(),
         updated_at: now,
-        archived: false,
+        archived: input
+            .get("archived")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -161,6 +336,9 @@ pub fn area_create(state: tauri::State<Arc<AppState>>, input: Value) -> CmdResul
 }
 
 pub(crate) fn area_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
+    validation::exists(conn, "life_areas", &id)?;
+    validation::input(conn, "area", &patch, false)?;
+
     apply_patch(
         conn,
         "life_areas",
@@ -250,10 +428,18 @@ pub fn goal_list(
 }
 
 pub(crate) fn goal_create_impl(conn: &Connection, input: Value) -> CmdResult<GoalRow> {
+    validation::input(conn, "goal", &input, true)?;
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    let result = goal_create_inner(&tx, input)?;
+    tx.commit().map_err(err)?;
+    Ok(result)
+}
+
+fn goal_create_inner(conn: &Connection, input: Value) -> CmdResult<GoalRow> {
     let id = new_id();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO goals (id, title, description, life_area_id, status, priority, start_date, target_date, progress_mode, manual_progress, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",
+        "INSERT INTO goals (id, title, description, life_area_id, status, priority, start_date, target_date, progress_mode, manual_progress, created_at, updated_at, completed_at, archived) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11,?12,?13)",
         params![
             id,
             required_string(&input, "title")?,
@@ -265,7 +451,9 @@ pub(crate) fn goal_create_impl(conn: &Connection, input: Value) -> CmdResult<Goa
             opt_string(&input, "targetDate"),
             opt_string(&input, "progressMode").unwrap_or_else(|| "manual".to_string()),
             opt_i64(&input, "manualProgress").unwrap_or(0),
-            now
+            now,
+            if input.get("status").and_then(Value::as_str) == Some("completed") { Some(now.clone()) } else { None },
+            input.get("archived").and_then(Value::as_bool).unwrap_or(false)
         ],
     )
     .map_err(err)?;
@@ -297,6 +485,15 @@ fn get_goal(conn: &Connection, id: &str) -> CmdResult<GoalRow> {
 }
 
 pub(crate) fn goal_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
+    validation::exists(conn, "goals", &id)?;
+    validation::input(conn, "goal", &patch, false)?;
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    let result = goal_update_inner(&tx, id, patch)?;
+    tx.commit().map_err(err)?;
+    Ok(result)
+}
+
+fn goal_update_inner(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
     apply_patch(
         conn,
         "goals",
@@ -464,10 +661,18 @@ fn like_escape(q: &str) -> String {
 }
 
 pub(crate) fn project_create_impl(conn: &Connection, input: Value) -> CmdResult<ProjectRow> {
+    validation::input(conn, "project", &input, true)?;
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    let result = project_create_inner(&tx, input)?;
+    tx.commit().map_err(err)?;
+    Ok(result)
+}
+
+fn project_create_inner(conn: &Connection, input: Value) -> CmdResult<ProjectRow> {
     let id = new_id();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO projects (id, title, description, life_area_id, status, priority, icon, color, start_date, target_date, progress_mode, manual_progress, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13)",
+        "INSERT INTO projects (id, title, description, life_area_id, status, priority, icon, color, start_date, target_date, progress_mode, manual_progress, created_at, updated_at, completed_at, archived) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14,?15)",
         params![
             id,
             required_string(&input, "title")?,
@@ -481,7 +686,9 @@ pub(crate) fn project_create_impl(conn: &Connection, input: Value) -> CmdResult<
             opt_string(&input, "targetDate"),
             opt_string(&input, "progressMode").unwrap_or_else(|| "auto".to_string()),
             opt_i64(&input, "manualProgress").unwrap_or(0),
-            now
+            now,
+            if input.get("status").and_then(Value::as_str) == Some("completed") { Some(now.clone()) } else { None },
+            input.get("archived").and_then(Value::as_bool).unwrap_or(false)
         ],
     )
     .map_err(err)?;
@@ -513,6 +720,15 @@ pub fn project_create(state: tauri::State<Arc<AppState>>, input: Value) -> CmdRe
 }
 
 pub(crate) fn project_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
+    validation::exists(conn, "projects", &id)?;
+    validation::input(conn, "project", &patch, false)?;
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    let result = project_update_inner(&tx, id, patch)?;
+    tx.commit().map_err(err)?;
+    Ok(result)
+}
+
+fn project_update_inner(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
     apply_patch(
         conn,
         "projects",
@@ -555,7 +771,7 @@ pub(crate) fn project_update_impl(conn: &Connection, id: String, patch: Value) -
             if let Some(gid) = gid.as_str() {
                 conn.execute(
                     "INSERT OR IGNORE INTO goal_projects (goal_id, project_id) VALUES (?1,?2)",
-                    params![id, gid],
+                    params![gid, id],
                 )
                 .map_err(err)?;
             }
@@ -588,6 +804,123 @@ pub fn project_delete(state: tauri::State<Arc<AppState>>, id: String) -> CmdResu
 
 // ---------------------------------------------------------------- tasks
 
+fn bucket_ids(conn: &Connection, date: &Option<String>, except: &str) -> CmdResult<Vec<String>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id FROM tasks WHERE scheduled_date IS ?1 AND id != ?2 ORDER BY sort_order, id",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map(params![date, except], |r| r.get(0))
+        .map_err(err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+}
+
+fn set_order(conn: &Connection, ids: &[String]) -> CmdResult<()> {
+    for (position, id) in ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE tasks SET sort_order=?1 WHERE id=?2",
+            params![position as i64, id],
+        )
+        .map_err(err)?;
+    }
+    Ok(())
+}
+
+fn task_move_inner(
+    conn: &Connection,
+    id: &str,
+    date: Option<String>,
+    before: Option<String>,
+) -> CmdResult<()> {
+    validation::exists(conn, "tasks", id)?;
+    if let Some(d) = &date {
+        validation::date(d)?;
+    }
+    let source: Option<String> = conn
+        .query_row(
+            "SELECT scheduled_date FROM tasks WHERE id=?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    let mut target = bucket_ids(conn, &date, id)?;
+    let index = match before {
+        Some(ref other) => target
+            .iter()
+            .position(|v| v == other)
+            .ok_or("validation: beforeId must be a different task in the destination bucket")?,
+        None => target.len(),
+    };
+    target.insert(index, id.to_string());
+    conn.execute(
+        "UPDATE tasks SET scheduled_date=?1, updated_at=?2 WHERE id=?3",
+        params![date, now_iso(), id],
+    )
+    .map_err(err)?;
+    if source != date {
+        set_order(conn, &bucket_ids(conn, &source, id)?)?;
+    }
+    set_order(conn, &target)
+}
+
+pub(crate) fn task_move_impl(
+    conn: &Connection,
+    id: String,
+    scheduled_date: Option<String>,
+    before_id: Option<String>,
+) -> CmdResult<()> {
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    task_move_inner(&tx, &id, scheduled_date, before_id)?;
+    tx.commit().map_err(err)
+}
+
+#[tauri::command]
+pub fn task_move(
+    state: tauri::State<Arc<AppState>>,
+    id: String,
+    scheduled_date: Option<String>,
+    before_id: Option<String>,
+) -> CmdResult<()> {
+    let conn = lock(&state)?;
+    task_move_impl(&conn, id, scheduled_date, before_id)
+}
+
+pub(crate) fn workspace_snapshot_impl(conn: &Connection) -> CmdResult<Value> {
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tasks = task_list_impl(
+        &tx,
+        Some(json!({"includeArchived": true, "excludeStatuses": [], "limit": -1})),
+    )?;
+    let projects = project_list_impl(&tx, Some(json!({"includeArchived": true})))?;
+    let areas = area_list_impl(&tx, Some(true))?;
+    let notes = {
+        let mut stmt = tx
+            .prepare("SELECT id, entity_type, entity_id, content, updated_at FROM notes")
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(NoteRow {
+                    id: r.get(0)?,
+                    entity_type: r.get(1)?,
+                    entity_id: r.get(2)?,
+                    content: r.get(3)?,
+                    updated_at: r.get(4)?,
+                })
+            })
+            .map_err(err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(err)?
+    };
+    tx.commit().map_err(err)?;
+    Ok(json!({"tasks": tasks, "projects": projects, "areas": areas, "notes": notes}))
+}
+
+#[tauri::command]
+pub fn workspace_snapshot(state: tauri::State<Arc<AppState>>) -> CmdResult<Value> {
+    let conn = lock(&state)?;
+    workspace_snapshot_impl(&conn)
+}
+
 fn map_task_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRow> {
     Ok(TaskRow {
         id: r.get(0)?,
@@ -611,10 +944,11 @@ fn map_task_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRow> {
         area_name: r.get(18)?,
         project_name: r.get(19)?,
         goal_ids: split_ids(r.get::<_, Option<String>>(20)?),
+        sort_order: r.get(21)?,
     })
 }
 
-const TASK_SELECT: &str = "SELECT t.id, t.title, t.description, t.status, t.life_area_id, t.project_id, t.scheduled_date, t.due_date, t.deadline_type, t.priority, t.estimated_minutes, t.actual_minutes, t.recurrence_rule, t.parent_task_id, t.created_at, t.updated_at, t.completed_at, t.archived, la.name, p.title, (SELECT GROUP_CONCAT(goal_id) FROM task_goals tg WHERE tg.task_id = t.id) FROM tasks t LEFT JOIN life_areas la ON la.id = t.life_area_id LEFT JOIN projects p ON p.id = t.project_id";
+const TASK_SELECT: &str = "SELECT t.id, t.title, t.description, t.status, t.life_area_id, t.project_id, t.scheduled_date, t.due_date, t.deadline_type, t.priority, t.estimated_minutes, t.actual_minutes, t.recurrence_rule, t.parent_task_id, t.created_at, t.updated_at, t.completed_at, t.archived, la.name, p.title, (SELECT GROUP_CONCAT(goal_id) FROM task_goals tg WHERE tg.task_id = t.id), t.sort_order FROM tasks t LEFT JOIN life_areas la ON la.id = t.life_area_id LEFT JOIN projects p ON p.id = t.project_id";
 
 pub(crate) fn task_list_impl(conn: &Connection, filter: Option<Value>) -> CmdResult<Vec<TaskRow>> {
     let filter = filter.unwrap_or(json!({}));
@@ -722,9 +1056,7 @@ pub(crate) fn task_list_impl(conn: &Connection, filter: Option<Value>) -> CmdRes
     if !where_clauses.is_empty() {
         sql.push_str(&format!(" WHERE {}", where_clauses.join(" AND ")));
     }
-    sql.push_str(
-        " ORDER BY (t.status = 'completed' OR t.status = 'cancelled'), t.scheduled_date IS NULL, t.scheduled_date, CASE t.priority WHEN 'p1' THEN 1 WHEN 'p2' THEN 2 WHEN 'p3' THEN 3 ELSE 4 END, t.created_at DESC",
-    );
+    sql.push_str(" ORDER BY t.scheduled_date IS NULL, t.scheduled_date, t.sort_order, t.id");
     let limit = opt_i64(&filter, "limit").unwrap_or(500);
     sql.push_str(" LIMIT ?");
     vals.push(Box::new(limit));
@@ -793,10 +1125,18 @@ pub fn task_counts(state: tauri::State<Arc<AppState>>) -> CmdResult<Value> {
 }
 
 pub(crate) fn task_create_impl(conn: &Connection, input: Value) -> CmdResult<TaskRow> {
+    validation::input(conn, "task", &input, true)?;
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    let result = task_create_inner(&tx, input)?;
+    tx.commit().map_err(err)?;
+    Ok(result)
+}
+
+fn task_create_inner(conn: &Connection, input: Value) -> CmdResult<TaskRow> {
     let id = new_id();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO tasks (id, title, description, status, life_area_id, project_id, scheduled_date, due_date, deadline_type, priority, estimated_minutes, actual_minutes, recurrence_rule, parent_task_id, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?15)",
+        "INSERT INTO tasks (id, title, description, status, life_area_id, project_id, scheduled_date, due_date, deadline_type, priority, estimated_minutes, actual_minutes, recurrence_rule, parent_task_id, created_at, updated_at, completed_at, archived) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?15,?16,?17)",
         params![
             id,
             required_string(&input, "title")?,
@@ -812,7 +1152,9 @@ pub(crate) fn task_create_impl(conn: &Connection, input: Value) -> CmdResult<Tas
             opt_i64(&input, "actualMinutes"),
             opt_string(&input, "recurrenceRule"),
             opt_string(&input, "parentTaskId"),
-            now
+            now,
+            if input.get("status").and_then(Value::as_str) == Some("completed") { Some(now.clone()) } else { None },
+            input.get("archived").and_then(Value::as_bool).unwrap_or(false)
         ],
     )
     .map_err(err)?;
@@ -827,6 +1169,7 @@ pub(crate) fn task_create_impl(conn: &Connection, input: Value) -> CmdResult<Tas
             }
         }
     }
+    task_move_inner(conn, &id, opt_string(&input, "scheduledDate"), None)?;
     get_task(conn, &id)
 }
 
@@ -861,6 +1204,28 @@ pub fn task_get(state: tauri::State<Arc<AppState>>, id: String) -> CmdResult<Opt
 }
 
 pub(crate) fn task_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
+    validation::exists(conn, "tasks", &id)?;
+    validation::input(conn, "task", &patch, false)?;
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    let result = task_update_inner(&tx, id, patch)?;
+    tx.commit().map_err(err)?;
+    Ok(result)
+}
+
+fn task_update_inner(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
+    if patch.get("scheduledDate").is_some() {
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT scheduled_date FROM tasks WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        let destination = opt_string(&patch, "scheduledDate");
+        if current != destination {
+            task_move_inner(conn, &id, destination, None)?;
+        }
+    }
     apply_patch(
         conn,
         "tasks",
@@ -988,6 +1353,8 @@ pub fn habit_list(state: tauri::State<Arc<AppState>>) -> CmdResult<Vec<HabitRow>
 }
 
 pub(crate) fn habit_create_impl(conn: &Connection, input: Value) -> CmdResult<HabitRow> {
+    validation::input(conn, "habit", &input, true)?;
+
     let id = new_id();
     conn.execute(
         "INSERT INTO habits (id, name, life_area_id, frequency_type, frequency_rule, start_date, status, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
@@ -1023,6 +1390,9 @@ pub fn habit_create(state: tauri::State<Arc<AppState>>, input: Value) -> CmdResu
 }
 
 pub(crate) fn habit_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
+    validation::exists(conn, "habits", &id)?;
+    validation::input(conn, "habit", &patch, false)?;
+
     let obj = patch.as_object().ok_or("invalid patch object")?;
     let mut sets: Vec<String> = Vec::new();
     let mut vals: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1373,6 +1743,16 @@ pub(crate) fn note_save_impl(
     entity_id: String,
     content: String,
 ) -> CmdResult<()> {
+    let table = match entity_type.as_str() {
+        "area" => "life_areas",
+        "goal" => "goals",
+        "project" => "projects",
+        "task" => "tasks",
+        "review" => "reviews",
+        _ => return Err("validation: unsupported entityType".into()),
+    };
+    validation::exists(conn, table, &entity_id)?;
+
     let now = now_iso();
     conn.execute(
         "INSERT INTO notes (id, entity_type, entity_id, content, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?5) ON CONFLICT (entity_type, entity_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",

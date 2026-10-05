@@ -1,14 +1,17 @@
-name: Windows CI
+name: Windows installer
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
 
 jobs:
-  validate:
+  package:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,5 +26,10 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
-      - run: npm run build
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - run: npm run package:win -- -- --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bizi-Windows-installer
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

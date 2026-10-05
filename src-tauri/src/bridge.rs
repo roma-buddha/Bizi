@@ -21,6 +21,8 @@ type JsonResponse = Response<Cursor<Vec<u8>>>;
 
 // (name, writes, destructive, args doc)
 pub const COMMANDS: &[(&str, bool, bool, &str)] = &[
+    ("workspace_snapshot", false, false, "{}"),
+    ("task_move", true, false, "{ id, scheduledDate: string | null, beforeId: string | null }"),
     ("area_list", false, false, "{ includeArchived?: bool }"),
     ("area_create", true, false, "{ input: { name, description?, icon?, color?, sortOrder? } }"),
     ("area_update", true, false, "{ id, patch }"),
@@ -79,8 +81,9 @@ impl Default for BridgeConfig {
 pub struct Bridge {
     pub data_dir: PathBuf,
     pub config: Mutex<BridgeConfig>,
-    pub token: Mutex<String>,
+    pub token: Arc<Mutex<String>>,
     server: Mutex<Option<Arc<Server>>>,
+    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     running_port: Mutex<Option<u16>>,
 }
 
@@ -91,8 +94,9 @@ impl Bridge {
         Ok(Bridge {
             data_dir: data_dir.to_path_buf(),
             config: Mutex::new(config),
-            token: Mutex::new(token),
+            token: Arc::new(Mutex::new(token)),
             server: Mutex::new(None),
+            worker: Mutex::new(None),
             running_port: Mutex::new(None),
         })
     }
@@ -125,6 +129,22 @@ fn read_or_create_token(data_dir: &Path) -> Result<String, String> {
 
 // ---------------------------------------------------------------- lifecycle
 
+// tiny_http releases its socket on an internal accept thread after drop.
+// Allow that bounded shutdown interval before falling back to another port.
+fn bind_server(port: u16) -> Result<Server, String> {
+    let mut last_error = String::new();
+    for attempt in 0..6 {
+        match Server::http(("127.0.0.1", port)) {
+            Ok(server) => return Ok(server),
+            Err(error) => last_error = error.to_string(),
+        }
+        if attempt < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    Err(last_error)
+}
+
 pub fn start(app: &AppHandle) -> Result<Option<u16>, String> {
     let bridge = app.state::<Bridge>();
     let (enabled, base_port) = {
@@ -138,8 +158,11 @@ pub fn start(app: &AppHandle) -> Result<Option<u16>, String> {
         return Ok(Some(port));
     }
     let mut bound = None;
-    for port in base_port..base_port.saturating_add(PORT_RANGE) {
-        if let Ok(server) = Server::http(("127.0.0.1", port)) {
+    if base_port < 1024 {
+        return Err("validation: port must be between 1024 and 65535".into());
+    }
+    for port in base_port..=base_port.saturating_add(PORT_RANGE - 1) {
+        if let Ok(server) = bind_server(port) {
             bound = Some((server, port));
             break;
         }
@@ -147,24 +170,38 @@ pub fn start(app: &AppHandle) -> Result<Option<u16>, String> {
     let (server, port) = bound.ok_or_else(|| {
         format!(
             "no free port in range {base_port}..{}",
-            base_port + PORT_RANGE - 1
+            base_port.saturating_add(PORT_RANGE - 1)
         )
     })?;
     let server = Arc::new(server);
-    let token = bridge.token.lock().map_err(|e| e.to_string())?.clone();
+    let token = bridge.token.clone();
     let state = app.state::<Arc<AppState>>().inner().clone();
     let handle = Some(app.clone());
     let log_path = bridge.data_dir.join("bridge.log");
     let thread_server = server.clone();
-    std::thread::spawn(move || {
-        for mut request in thread_server.incoming_requests() {
-            let response = handle_request(&state, &handle, &token, &log_path, &mut request);
-            let _ = request.respond(response);
-        }
-    });
+    let worker =
+        std::thread::spawn(move || serve_requests(thread_server, state, handle, token, log_path));
+    *bridge.worker.lock().map_err(|e| e.to_string())? = Some(worker);
     *bridge.server.lock().map_err(|e| e.to_string())? = Some(server);
     *bridge.running_port.lock().map_err(|e| e.to_string())? = Some(port);
     Ok(Some(port))
+}
+
+fn serve_requests(
+    thread_server: Arc<Server>,
+    state: Arc<AppState>,
+    handle: Option<AppHandle>,
+    token: Arc<Mutex<String>>,
+    log_path: PathBuf,
+) {
+    for mut request in thread_server.incoming_requests() {
+        let current_token = match token.lock() {
+            Ok(token) => token.clone(),
+            Err(_) => break,
+        };
+        let response = handle_request(&state, &handle, &current_token, &log_path, &mut request);
+        let _ = request.respond(response);
+    }
 }
 
 pub fn stop(app: &AppHandle) -> Result<(), String> {
@@ -172,6 +209,11 @@ pub fn stop(app: &AppHandle) -> Result<(), String> {
     let server = bridge.server.lock().map_err(|e| e.to_string())?.take();
     if let Some(server) = server {
         server.unblock();
+        if let Some(worker) = bridge.worker.lock().map_err(|e| e.to_string())?.take() {
+            worker
+                .join()
+                .map_err(|_| "bridge worker failed to stop".to_string())?;
+        }
     }
     *bridge.running_port.lock().map_err(|e| e.to_string())? = None;
     Ok(())
@@ -287,7 +329,11 @@ fn handle_invoke(
             }
             json_resp(200, json!({ "ok": true, "result": value }))
         }
-        Err(e) if e.starts_with("unknown command") => {
+        Err(e)
+            if e.starts_with("unknown command")
+                || e.starts_with("validation:")
+                || e.starts_with("missing field:") =>
+        {
             json_resp(400, json!({ "ok": false, "error": e }))
         }
         Err(e) => json_resp(500, json!({ "ok": false, "error": e })),
@@ -359,6 +405,22 @@ pub(crate) fn dispatch(state: &AppState, cmd: &str, args: &Value) -> Result<Valu
     }
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     match cmd {
+        "workspace_snapshot" => commands::workspace_snapshot_impl(&conn),
+        "task_move" => {
+            for key in ["scheduledDate", "beforeId"] {
+                if let Some(v) = args.get(key) {
+                    if !v.is_null() && !v.is_string() {
+                        return Err(format!("validation: {key} must be text or null"));
+                    }
+                }
+            }
+            ok_json(commands::task_move_impl(
+                &conn,
+                req_str(args, "id")?,
+                opt_str(args, "scheduledDate"),
+                opt_str(args, "beforeId"),
+            ))
+        }
         "area_list" => ok_json(commands::area_list_impl(
             &conn,
             opt_bool(args, "includeArchived"),
@@ -504,6 +566,9 @@ pub fn bridge_set_enabled(app: AppHandle, enabled: bool) -> Result<Value, String
 
 #[tauri::command]
 pub fn bridge_set_port(app: AppHandle, port: u16) -> Result<Value, String> {
+    if port < 1024 {
+        return Err("validation: port must be between 1024 and 65535".into());
+    }
     let bridge = app.state::<Bridge>();
     let was_running = bridge
         .running_port
@@ -556,8 +621,10 @@ mod tests {
     use rusqlite::Connection;
 
     fn dummy_state() -> AppState {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         AppState {
-            conn: Mutex::new(Connection::open_in_memory().unwrap()),
+            conn: Mutex::new(conn),
         }
     }
 
@@ -598,6 +665,7 @@ mod tests {
 
     fn seeded_state() -> AppState {
         let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         crate::db::migrate(&conn).unwrap();
         AppState {
             conn: Mutex::new(conn),
@@ -615,6 +683,12 @@ mod tests {
         use std::io::Write as _;
         use std::net::TcpStream;
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
         let auth = token
             .map(|t| format!("Authorization: Bearer {t}\r\n"))
             .unwrap_or_default();
@@ -639,19 +713,15 @@ mod tests {
         let state = Arc::new(seeded_state());
         let server = Arc::new(Server::http(("127.0.0.1", 0)).unwrap());
         let port = server.server_addr().to_ip().unwrap().port();
-        let token = "test-token".to_string();
+        let token = Arc::new(Mutex::new("test-token".to_string()));
+        let rotating_token = token.clone();
         let log_path = std::env::temp_dir().join("bizi-test-bridge.log");
         let _ = std::fs::remove_file(&log_path);
         let thread_server = server.clone();
         let thread_state = state.clone();
         let thread_log = log_path.clone();
-        std::thread::spawn(move || {
-            let emit: Option<AppHandle> = None;
-            for mut request in thread_server.incoming_requests() {
-                let response =
-                    handle_request(&thread_state, &emit, &token, &thread_log, &mut request);
-                let _ = request.respond(response);
-            }
+        let worker = std::thread::spawn(move || {
+            serve_requests(thread_server, thread_state, None, token, thread_log)
         });
 
         // /health is open.
@@ -700,11 +770,47 @@ mod tests {
         let (status, _) = raw_request(port, "GET", "/nope", Some("test-token"), "");
         assert_eq!(status, 404);
 
+        *rotating_token.lock().unwrap() = "rotated-token".into();
+        assert_eq!(
+            raw_request(port, "GET", "/schema", Some("test-token"), "").0,
+            401
+        );
+        assert_eq!(
+            raw_request(port, "GET", "/schema", Some("rotated-token"), "").0,
+            200
+        );
+        assert_eq!(
+            raw_request(
+                port,
+                "POST",
+                "/invoke",
+                Some("rotated-token"),
+                "{\"cmd\":\"task_create\",\"args\":{\"input\":{\"title\":\" \"}}}"
+            )
+            .0,
+            400
+        );
+
         // The audit log recorded the calls.
         let log = std::fs::read_to_string(&log_path).unwrap();
         assert!(log.contains("task_create"));
         assert!(log.contains("from bridge test"));
 
         server.unblock();
+        worker.join().unwrap();
+        drop(server);
+        // Stopping releases the listener for re-enable on the same port.
+        let restarted = Arc::new(bind_server(port).unwrap());
+        let listener = restarted.clone();
+        let worker = std::thread::spawn(move || {
+            serve_requests(listener, state.clone(), None, rotating_token, log_path)
+        });
+        assert_eq!(raw_request(port, "GET", "/health", None, "").0, 200);
+        // A second listener also accepts a changed port while the first is stopped.
+        restarted.unblock();
+        worker.join().unwrap();
+        drop(restarted);
+        let changed = Server::http(("127.0.0.1", 0)).unwrap();
+        assert!(changed.server_addr().to_ip().unwrap().port() > 0);
     }
 }

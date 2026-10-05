@@ -166,13 +166,35 @@ pub fn init(app: &AppHandle) -> Result<AppState, String> {
         .map_err(|e| e.to_string())?;
     conn.pragma_update(None, "busy_timeout", 5000)
         .map_err(|e| e.to_string())?;
+    backup_before_migration(&conn, &dir)?;
     migrate(&conn)?;
     Ok(AppState {
         conn: Mutex::new(conn),
     })
 }
 
+pub(crate) fn backup_before_migration(
+    conn: &Connection,
+    dir: &std::path::Path,
+) -> Result<(), String> {
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    if version > 0 && version < 3 {
+        let path = dir.join(format!("bizi-before-v3-{}.db", new_id()));
+        conn.backup(rusqlite::DatabaseName::Main, path, None)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub(crate) fn migrate(conn: &Connection) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    migrate_inner(&tx)?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn migrate_inner(conn: &Connection) -> Result<(), String> {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|e| e.to_string())?;
@@ -195,6 +217,13 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), String> {
         );
         conn.pragma_update(None, "user_version", 2)
             .map_err(|e| e.to_string())?;
+    }
+    if version < 3 {
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+            WITH positions AS (SELECT id, ROW_NUMBER() OVER (PARTITION BY scheduled_date ORDER BY (status IN ('completed','cancelled')), CASE priority WHEN 'p1' THEN 1 WHEN 'p2' THEN 2 WHEN 'p3' THEN 3 ELSE 4 END, created_at DESC, id) - 1 AS position FROM tasks)
+            UPDATE tasks SET sort_order = (SELECT position FROM positions WHERE positions.id=tasks.id);
+            CREATE INDEX idx_tasks_bucket_order ON tasks(scheduled_date, sort_order);
+            PRAGMA user_version = 3;").map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -619,8 +648,58 @@ mod tests {
     }
 
     #[test]
+    fn version_two_migration_backs_up_wal_data_and_preserves_order() {
+        let dir = std::env::temp_dir().join(format!("bizi-migration-{}", new_id()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("bizi.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        seed(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        let tasks = count(&conn, "SELECT COUNT(*) FROM tasks");
+        backup_before_migration(&conn, &dir).unwrap();
+        let backup_path = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("bizi-before-v3")
+            })
+            .unwrap();
+        let backup = Connection::open(&backup_path).unwrap();
+        assert_eq!(count(&backup, "SELECT COUNT(*) FROM tasks"), tasks);
+        assert_eq!(count(&backup, "PRAGMA user_version"), 2);
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(count(&conn, "PRAGMA user_version"), 3);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM tasks"), tasks);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM (SELECT scheduled_date,sort_order,COUNT(*) n FROM tasks GROUP BY scheduled_date,sort_order HAVING n>1)"), 0);
+        conn.execute(
+            "UPDATE tasks SET sort_order=123 WHERE id=(SELECT id FROM tasks LIMIT 1)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let reopened = Connection::open(&path).unwrap();
+        assert_eq!(
+            count(&reopened, "SELECT COUNT(*) FROM tasks WHERE sort_order=123"),
+            1
+        );
+        drop(reopened);
+        drop(backup);
+        std::fs::remove_file(backup_path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
     fn migration_seeds_relational_sample_data() {
         let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         migrate(&conn).unwrap();
 
         assert!(count(&conn, "SELECT COUNT(*) FROM life_areas") >= 6);
@@ -657,6 +736,7 @@ mod tests {
     #[test]
     fn scheduled_and_due_dates_are_distinct_columns() {
         let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         migrate(&conn).unwrap();
         let row: (Option<String>, Option<String>) = conn
             .query_row(

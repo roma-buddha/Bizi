@@ -2,8 +2,10 @@ export type ID = string;
 
 export type Priority = "p1" | "p2" | "p3" | "p4";
 export type DeadlineType = "hard" | "soft" | "none";
-export type TaskStatus = "inbox" | "todo" | "in_progress" | "waiting" | "completed" | "cancelled";
-export type GoalStatus = "planned" | "active" | "on_hold" | "completed" | "abandoned";
+export type TaskStatus =
+  "inbox" | "todo" | "in_progress" | "waiting" | "completed" | "cancelled";
+export type GoalStatus =
+  "planned" | "active" | "on_hold" | "completed" | "abandoned";
 export type ProjectStatus =
   | "idea"
   | "planned"
@@ -50,7 +52,13 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   cancelled: "Cancelled",
 };
 
-export const GOAL_STATUSES: GoalStatus[] = ["planned", "active", "on_hold", "completed", "abandoned"];
+export const GOAL_STATUSES: GoalStatus[] = [
+  "planned",
+  "active",
+  "on_hold",
+  "completed",
+  "abandoned",
+];
 export const GOAL_STATUS_LABELS: Record<GoalStatus, string> = {
   planned: "Planned",
   active: "Active",
@@ -173,7 +181,15 @@ export interface Project {
   totalTasks: number;
 }
 
+export interface WorkspaceSnapshot {
+  tasks: Task[];
+  projects: Project[];
+  areas: LifeArea[];
+  notes: Note[];
+}
+
 export interface Task {
+  sortOrder: number;
   id: ID;
   title: string;
   description: string;
@@ -315,19 +331,47 @@ export interface ProjectFilter {
   q?: string;
 }
 
-export type AreaInput = Partial<Omit<LifeArea, "id" | "createdAt" | "updatedAt">> & { name: string };
-export type GoalInput = Partial<Omit<Goal, "id" | "createdAt" | "updatedAt" | "areaName">> & {
+export type AreaInput = Partial<
+  Omit<LifeArea, "id" | "createdAt" | "updatedAt">
+> & { name: string };
+export type GoalInput = Partial<
+  Omit<Goal, "id" | "createdAt" | "updatedAt" | "areaName">
+> & {
   title: string;
 };
-export type ProjectInput = Partial<Omit<Project, "id" | "createdAt" | "updatedAt" | "areaName" | "openTasks" | "totalTasks">> & {
+export type ProjectInput = Partial<
+  Omit<
+    Project,
+    "id" | "createdAt" | "updatedAt" | "areaName" | "openTasks" | "totalTasks"
+  >
+> & {
   title: string;
 };
-export type TaskInput = Partial<Omit<Task, "id" | "createdAt" | "updatedAt" | "areaName" | "projectName">> & {
+export type TaskInput = Partial<
+  Omit<
+    Task,
+    "id" | "createdAt" | "updatedAt" | "areaName" | "projectName" | "sortOrder"
+  >
+> & {
   title: string;
 };
 
-export type AreaPatch = Partial<Omit<LifeArea, "id" | "createdAt" | "updatedAt">>;
-export type GoalPatch = Partial<Omit<Goal, "id" | "createdAt" | "updatedAt" | "areaName">>;
-export type ProjectPatch = Partial<Omit<Project, "id" | "createdAt" | "updatedAt" | "areaName" | "openTasks" | "totalTasks">>;
-export type TaskPatch = Partial<Omit<Task, "id" | "createdAt" | "updatedAt" | "areaName" | "projectName">>;
+export type AreaPatch = Partial<
+  Omit<LifeArea, "id" | "createdAt" | "updatedAt">
+>;
+export type GoalPatch = Partial<
+  Omit<Goal, "id" | "createdAt" | "updatedAt" | "areaName">
+>;
+export type ProjectPatch = Partial<
+  Omit<
+    Project,
+    "id" | "createdAt" | "updatedAt" | "areaName" | "openTasks" | "totalTasks"
+  >
+>;
+export type TaskPatch = Partial<
+  Omit<
+    Task,
+    "id" | "createdAt" | "updatedAt" | "areaName" | "projectName" | "sortOrder"
+  >
+>;
 export type HabitPatch = Partial<Omit<Habit, "id" | "createdAt" | "areaName">>;

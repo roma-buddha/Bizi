@@ -7,6 +7,7 @@ mod bridge;
 mod commands;
 mod db;
 mod models;
+mod validation;
 
 fn main() {
     tauri::Builder::default()
@@ -42,6 +43,8 @@ fn main() {
             commands::project_update,
             commands::project_delete,
             commands::task_list,
+            commands::workspace_snapshot,
+            commands::task_move,
             commands::task_get,
             commands::task_counts,
             commands::task_create,

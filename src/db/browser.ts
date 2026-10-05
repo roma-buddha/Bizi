@@ -30,6 +30,7 @@ import type {
   TaskPatch,
 } from "../models/types";
 import type { BiziApi } from "./index";
+import { validateInput } from "./validation";
 import { addDaysISO, todayISO } from "../utils/date";
 
 interface DB {
@@ -57,13 +58,19 @@ const PRIORITY_RANK: Record<string, number> = { p1: 1, p2: 2, p3: 3, p4: 4 };
 
 function sortTasks(rows: Task[]): Task[] {
   return [...rows].sort((a, b) => {
+    if (a.scheduledDate === b.scheduledDate && a.sortOrder !== b.sortOrder)
+      return a.sortOrder - b.sortOrder;
     const aDone = a.status === "completed" || a.status === "cancelled" ? 1 : 0;
     const bDone = b.status === "completed" || b.status === "cancelled" ? 1 : 0;
     if (aDone !== bDone) return aDone - bDone;
     const aNull = a.scheduledDate ? 0 : 1;
     const bNull = b.scheduledDate ? 0 : 1;
     if (aNull !== bNull) return aNull - bNull;
-    if (a.scheduledDate && b.scheduledDate && a.scheduledDate !== b.scheduledDate)
+    if (
+      a.scheduledDate &&
+      b.scheduledDate &&
+      a.scheduledDate !== b.scheduledDate
+    )
       return a.scheduledDate < b.scheduledDate ? -1 : 1;
     const pr = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
     if (pr !== 0) return pr;
@@ -76,8 +83,23 @@ function seedDB(): DB {
   const iso = (d: number) => addDaysISO(t, d);
   const ts = now();
   const mk = {
-    area(name: string, icon: string, color: string, sortOrder: number): LifeArea {
-      return { id: uid(), name, description: "", icon, color, sortOrder, createdAt: ts, updatedAt: ts, archived: false };
+    area(
+      name: string,
+      icon: string,
+      color: string,
+      sortOrder: number,
+    ): LifeArea {
+      return {
+        id: uid(),
+        name,
+        description: "",
+        icon,
+        color,
+        sortOrder,
+        createdAt: ts,
+        updatedAt: ts,
+        archived: false,
+      };
     },
   };
 
@@ -114,11 +136,35 @@ function seedDB(): DB {
     projectIds: [],
   });
 
-  const gFin = goal("Financial Independence", business, "active", "p1", iso(730));
-  const gRes = goal("Publish High-Quality Research", research, "active", "p2", iso(365));
+  const gFin = goal(
+    "Financial Independence",
+    business,
+    "active",
+    "p1",
+    iso(730),
+  );
+  const gRes = goal(
+    "Publish High-Quality Research",
+    research,
+    "active",
+    "p2",
+    iso(365),
+  );
   const gFit = goal("Improve Fitness", health, "active", "p3", iso(180));
-  const gNet = goal("Build an International Research Network", research, "planned", "p3", iso(540));
-  const gCit = goal("Obtain Spanish Citizenship", finances, "on_hold", "p4", iso(900));
+  const gNet = goal(
+    "Build an International Research Network",
+    research,
+    "planned",
+    "p3",
+    iso(540),
+  );
+  const gCit = goal(
+    "Obtain Spanish Citizenship",
+    finances,
+    "on_hold",
+    "p4",
+    iso(900),
+  );
   gFin.projectIds = []; // linked after projects exist
   const goals = [gFin, gRes, gFit, gNet, gCit];
 
@@ -152,14 +198,32 @@ function seedDB(): DB {
   });
 
   const pSci = project("SciMaps", business, "active", "p1", iso(120));
-  const pRev = project("Human-AI Interaction Review", research, "active", "p2", iso(60));
-  const pWeb = project("Personal Website Redesign", business, "planned", "p3", iso(45));
+  const pRev = project(
+    "Human-AI Interaction Review",
+    research,
+    "active",
+    "p2",
+    iso(60),
+  );
+  const pWeb = project(
+    "Personal Website Redesign",
+    business,
+    "planned",
+    "p3",
+    iso(45),
+  );
   gFin.projectIds.push(pSci.id);
   gRes.projectIds.push(pRev.id);
   pSci.goalIds.push(gFin.id);
   pRev.goalIds.push(gRes.id);
   const projects = [pSci, pRev, pWeb];
 
+  const initialOrder = new Map<string | null, number>();
+  const nextOrder = (date: string | null) => {
+    const position = initialOrder.get(date) ?? 0;
+    initialOrder.set(date, position + 1);
+    return position;
+  };
   const task = (
     title: string,
     status: Task["status"],
@@ -172,6 +236,7 @@ function seedDB(): DB {
     completedDaysAgo: number | null = null,
   ): Task => ({
     id: uid(),
+    sortOrder: nextOrder(scheduled),
     title,
     description: "",
     status,
@@ -200,30 +265,210 @@ function seedDB(): DB {
     return x;
   };
 
-  const tOnboard = add(task("Improve onboarding", "todo", business, pSci, t, iso(14), "soft", "p2"));
-  add(task("Fix profile statistics", "todo", business, pSci, t, t, "hard", "p1"));
-  add(task("Design pricing page", "todo", business, pSci, iso(2), iso(10), "soft", "p2"));
-  add(task("Implement OpenAlex connection", "completed", business, pSci, iso(-6), iso(-4), "soft", "p2", 4));
-  const tReview = add(task("Review 10 papers", "in_progress", research, pRev, t, iso(7), "soft", "p2"));
-  add(task("Update search strategy", "todo", research, pRev, iso(1), null, "none", "p3"));
-  add(task("Draft methodology section", "todo", research, pRev, iso(3), iso(21), "hard", "p1"));
-  add(task("Book dentist appointment", "todo", health, null, t, iso(30), "soft", "p3"));
+  const tOnboard = add(
+    task(
+      "Improve onboarding",
+      "todo",
+      business,
+      pSci,
+      t,
+      iso(14),
+      "soft",
+      "p2",
+    ),
+  );
+  add(
+    task("Fix profile statistics", "todo", business, pSci, t, t, "hard", "p1"),
+  );
+  add(
+    task(
+      "Design pricing page",
+      "todo",
+      business,
+      pSci,
+      iso(2),
+      iso(10),
+      "soft",
+      "p2",
+    ),
+  );
+  add(
+    task(
+      "Implement OpenAlex connection",
+      "completed",
+      business,
+      pSci,
+      iso(-6),
+      iso(-4),
+      "soft",
+      "p2",
+      4,
+    ),
+  );
+  const tReview = add(
+    task(
+      "Review 10 papers",
+      "in_progress",
+      research,
+      pRev,
+      t,
+      iso(7),
+      "soft",
+      "p2",
+    ),
+  );
+  add(
+    task(
+      "Update search strategy",
+      "todo",
+      research,
+      pRev,
+      iso(1),
+      null,
+      "none",
+      "p3",
+    ),
+  );
+  add(
+    task(
+      "Draft methodology section",
+      "todo",
+      research,
+      pRev,
+      iso(3),
+      iso(21),
+      "hard",
+      "p1",
+    ),
+  );
+  add(
+    task(
+      "Book dentist appointment",
+      "todo",
+      health,
+      null,
+      t,
+      iso(30),
+      "soft",
+      "p3",
+    ),
+  );
   add(task("Go to gym", "todo", health, null, t, null, "none", "p3"));
-  add(task("Review quarterly budget", "todo", finances, null, iso(5), iso(12), "soft", "p3"));
-  add(task("Submit conference paper", "waiting", research, null, iso(4), iso(14), "hard", "p1"));
-  add(task("Renew passport", "todo", finances, null, null, iso(-2), "hard", "p1"));
-  add(task("File tax documents", "completed", finances, null, iso(-9), iso(-7), "hard", "p2", 7));
-  add(task("Water the plants", "completed", health, null, iso(-1), null, "none", "p4", 1));
-  const sub = add(task("Sketch new onboarding screens", "todo", business, pSci, iso(1), null, "none", "p3"));
+  add(
+    task(
+      "Review quarterly budget",
+      "todo",
+      finances,
+      null,
+      iso(5),
+      iso(12),
+      "soft",
+      "p3",
+    ),
+  );
+  add(
+    task(
+      "Submit conference paper",
+      "waiting",
+      research,
+      null,
+      iso(4),
+      iso(14),
+      "hard",
+      "p1",
+    ),
+  );
+  add(
+    task("Renew passport", "todo", finances, null, null, iso(-2), "hard", "p1"),
+  );
+  add(
+    task(
+      "File tax documents",
+      "completed",
+      finances,
+      null,
+      iso(-9),
+      iso(-7),
+      "hard",
+      "p2",
+      7,
+    ),
+  );
+  add(
+    task(
+      "Water the plants",
+      "completed",
+      health,
+      null,
+      iso(-1),
+      null,
+      "none",
+      "p4",
+      1,
+    ),
+  );
+  const sub = add(
+    task(
+      "Sketch new onboarding screens",
+      "todo",
+      business,
+      pSci,
+      iso(1),
+      null,
+      "none",
+      "p3",
+    ),
+  );
   sub.parentTaskId = tOnboard.id;
-  add(task("Collect user feedback on current onboarding", "completed", business, pSci, iso(-3), null, "none", "p3", 2));
-  add(task("Look into new laptop", "inbox", null, null, null, null, "none", "p3"));
-  add(task("Idea: weekly planning template", "inbox", null, null, null, null, "none", "p4"));
-  add(task("Ask Anna about the conference hotel", "inbox", null, null, null, null, "none", "p3"));
+  add(
+    task(
+      "Collect user feedback on current onboarding",
+      "completed",
+      business,
+      pSci,
+      iso(-3),
+      null,
+      "none",
+      "p3",
+      2,
+    ),
+  );
+  add(
+    task("Look into new laptop", "inbox", null, null, null, null, "none", "p3"),
+  );
+  add(
+    task(
+      "Idea: weekly planning template",
+      "inbox",
+      null,
+      null,
+      null,
+      null,
+      "none",
+      "p4",
+    ),
+  );
+  add(
+    task(
+      "Ask Anna about the conference hotel",
+      "inbox",
+      null,
+      null,
+      null,
+      null,
+      "none",
+      "p3",
+    ),
+  );
   tReview.goalIds.push(gRes.id);
   tOnboard.goalIds.push(gFin.id);
 
-  const habit = (name: string, area: LifeArea, frequencyType: Habit["frequencyType"], frequencyRule: string): Habit => ({
+  const habit = (
+    name: string,
+    area: LifeArea,
+    frequencyType: Habit["frequencyType"],
+    frequencyRule: string,
+  ): Habit => ({
     id: uid(),
     name,
     lifeAreaId: area.id,
@@ -257,12 +502,22 @@ function seedDB(): DB {
       id: uid(),
       entityType: "project",
       entityId: pWeb.id,
-      content: "Goals for the redesign:\n\n- Cleaner landing page\n- Better mobile layout\n- Add a changelog section",
+      content:
+        "Goals for the redesign:\n\n- Cleaner landing page\n- Better mobile layout\n- Add a changelog section",
       updatedAt: ts,
     },
   ];
 
-  return { areas, goals, projects, tasks, habits, habitEntries, reviews: [], notes };
+  return {
+    areas,
+    goals,
+    projects,
+    tasks,
+    habits,
+    habitEntries,
+    reviews: [],
+    notes,
+  };
 }
 
 function load(): DB {
@@ -270,7 +525,9 @@ function load(): DB {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return normalize(JSON.parse(raw) as DB);
   } catch {
-    // corrupted storage: reseed
+    throw new Error(
+      "Stored browser data could not be read. The original data has been preserved.",
+    );
   }
   // First run after the point0 merge: adopt data stored by the planner branch.
   const imported = importLegacyPlannerData();
@@ -285,12 +542,30 @@ function load(): DB {
 
 /** Fill fields that were added after a DB was first stored. */
 function normalize(db: DB): DB {
-  const palette = ["amber", "blue", "green", "violet", "rose", "slate", "teal", "orange"];
+  const palette = [
+    "amber",
+    "blue",
+    "green",
+    "violet",
+    "rose",
+    "slate",
+    "teal",
+    "orange",
+  ];
   db.projects = (db.projects ?? []).map((p, i) => ({
     ...p,
     icon: p.icon ?? "briefcase",
     color: p.color ?? palette[i % palette.length],
   }));
+  const buckets = new Map<string | null, number>();
+  db.tasks = db.tasks.map((t) => {
+    const next = buckets.get(t.scheduledDate) ?? 0;
+    buckets.set(t.scheduledDate, next + 1);
+    return {
+      ...t,
+      sortOrder: t.sortOrder ?? next,
+    };
+  });
   return db;
 }
 
@@ -347,8 +622,13 @@ function importLegacyPlannerData(): DB | null {
   if (!rawTasks && !rawProjects && !rawAreas) return null;
   const ts = now();
   const notes: Note[] = [];
-  const noteFor = (entityType: EntityType, entityId: string, content: string) => {
-    if (content) notes.push({ id: uid(), entityType, entityId, content, updatedAt: ts });
+  const noteFor = (
+    entityType: EntityType,
+    entityId: string,
+    content: string,
+  ) => {
+    if (content)
+      notes.push({ id: uid(), entityType, entityId, content, updatedAt: ts });
   };
 
   const areas: LifeArea[] = [];
@@ -375,7 +655,9 @@ function importLegacyPlannerData(): DB | null {
 
   const projects: Project[] = [];
   try {
-    const parsed = rawProjects ? (JSON.parse(rawProjects) as LegacyProject[]) : [];
+    const parsed = rawProjects
+      ? (JSON.parse(rawProjects) as LegacyProject[])
+      : [];
     parsed.forEach((p) => {
       if (!p.id) return;
       projects.push({
@@ -425,6 +707,9 @@ function importLegacyPlannerData(): DB | null {
         const done = t.done === true;
         tasks.push({
           id: t.id,
+          sortOrder: tasks.filter(
+            (x) => x.scheduledDate === (t.scheduledDate ?? dayValid),
+          ).length,
           title: t.title,
           description: "",
           status: statusMap[t.status ?? (done ? "done" : "todo")] ?? "todo",
@@ -453,11 +738,23 @@ function importLegacyPlannerData(): DB | null {
     // ignore malformed legacy tasks
   }
 
-  return { areas, goals: [], projects, tasks, habits: [], habitEntries: [], reviews: [], notes };
+  return {
+    areas,
+    goals: [],
+    projects,
+    tasks,
+    habits: [],
+    habitEntries: [],
+    reviews: [],
+    notes,
+  };
 }
 
 export function createBrowserApi(): BiziApi {
-  const db = load();
+  let db: DB;
+  const initialize = () => {
+    db ??= normalize(load());
+  };
   const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
 
   const areaById = (id: string | null | undefined): LifeArea | undefined =>
@@ -470,18 +767,89 @@ export function createBrowserApi(): BiziApi {
 
   const refreshProjectCounts = () => {
     for (const p of db.projects) {
-      const tasks = db.tasks.filter((t) => t.projectId === p.id);
+      const tasks = db.tasks.filter((t) => t.projectId === p.id && !t.archived);
       p.totalTasks = tasks.length;
-      p.openTasks = tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled").length;
+      p.openTasks = tasks.filter(
+        (t) => t.status !== "completed" && t.status !== "cancelled",
+      ).length;
     }
   };
 
-  return {
+  const exists = (kind: string, id: string) => {
+    const rows =
+      kind === "area"
+        ? db.areas
+        : kind === "goal"
+          ? db.goals
+          : kind === "project"
+            ? db.projects
+            : kind === "task"
+              ? db.tasks
+              : kind === "habit"
+                ? db.habits
+                : db.reviews;
+    return rows.some((row) => row.id === id);
+  };
+  const moveTask = (
+    id: string,
+    date: string | null,
+    beforeId: string | null,
+  ) => {
+    validateInput("task", { scheduledDate: date }, false, exists);
+    const task = db.tasks.find((t) => t.id === id);
+    if (!task) throw new Error("Task not found");
+    const target = db.tasks
+      .filter((t) => t.id !== id && t.scheduledDate === date)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
+    const position =
+      beforeId === null
+        ? target.length
+        : target.findIndex((t) => t.id === beforeId);
+    if (position < 0)
+      throw new Error(
+        "beforeId must be a different task in the destination bucket",
+      );
+    const source = task.scheduledDate;
+    task.scheduledDate = date;
+    task.updatedAt = now();
+    target.splice(position, 0, task);
+    target.forEach((t, i) => (t.sortOrder = i));
+    if (source !== date)
+      db.tasks
+        .filter((t) => t.scheduledDate === source)
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .forEach((t, i) => (t.sortOrder = i));
+  };
+  const api: BiziApi = {
+    snapshot: async () => {
+      initialize();
+      refreshProjectCounts();
+      return structuredClone({
+        tasks: [...db.tasks]
+          .sort(
+            (a, b) =>
+              (a.scheduledDate ?? "zz").localeCompare(
+                b.scheduledDate ?? "zz",
+              ) ||
+              a.sortOrder - b.sortOrder ||
+              a.id.localeCompare(b.id),
+          )
+          .map(enrichTask),
+        projects: db.projects.map((p) => ({
+          ...p,
+          areaName: areaById(p.lifeAreaId)?.name ?? null,
+        })),
+        areas: db.areas,
+        notes: db.notes,
+      });
+    },
     area: {
       list: async (includeArchived = false) =>
         db.areas
           .filter((a) => includeArchived || !a.archived)
-          .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+          .sort(
+            (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+          ),
       create: async (input: AreaInput) => {
         const item: LifeArea = {
           id: uid(),
@@ -492,7 +860,7 @@ export function createBrowserApi(): BiziApi {
           sortOrder: input.sortOrder ?? db.areas.length,
           createdAt: now(),
           updatedAt: now(),
-          archived: false,
+          archived: input.archived ?? false,
         };
         db.areas.push(item);
         save();
@@ -505,6 +873,13 @@ export function createBrowserApi(): BiziApi {
         save();
       },
       remove: async (id) => {
+        for (const row of [
+          ...db.tasks,
+          ...db.projects,
+          ...db.goals,
+          ...db.habits,
+        ])
+          if (row.lifeAreaId === id) row.lifeAreaId = null;
         db.areas = db.areas.filter((a) => a.id !== id);
         save();
       },
@@ -516,7 +891,9 @@ export function createBrowserApi(): BiziApi {
           .map((g) => ({
             ...g,
             areaName: areaById(g.lifeAreaId)?.name ?? null,
-            projectIds: db.projects.filter((p) => p.goalIds.includes(g.id)).map((p) => p.id),
+            projectIds: db.projects
+              .filter((p) => p.goalIds.includes(g.id))
+              .map((p) => p.id),
           }))
           .sort((a, b) => {
             const ac = a.status === "completed" ? 1 : 0;
@@ -539,12 +916,19 @@ export function createBrowserApi(): BiziApi {
           manualProgress: input.manualProgress ?? 0,
           createdAt: now(),
           updatedAt: now(),
-          completedAt: null,
-          archived: false,
+          completedAt: input.status === "completed" ? now() : null,
+          archived: input.archived ?? false,
           areaName: areaById(input.lifeAreaId)?.name ?? null,
           projectIds: input.projectIds ?? [],
         };
         db.goals.push(item);
+        for (const project of db.projects) {
+          if (
+            item.projectIds.includes(project.id) &&
+            !project.goalIds.includes(item.id)
+          )
+            project.goalIds.push(item.id);
+        }
         save();
         return item;
       },
@@ -570,23 +954,36 @@ export function createBrowserApi(): BiziApi {
       },
       remove: async (id) => {
         db.goals = db.goals.filter((g) => g.id !== id);
-        for (const p of db.projects) p.goalIds = p.goalIds.filter((g) => g !== id);
+        for (const p of db.projects)
+          p.goalIds = p.goalIds.filter((g) => g !== id);
         save();
       },
     },
     project: {
       list: async (filter: ProjectFilter = {}) => {
         refreshProjectCounts();
-        let rows = db.projects.filter((p) => filter.includeArchived || !p.archived);
-        if (filter.areaId) rows = rows.filter((p) => p.lifeAreaId === filter.areaId);
-        if (filter.statuses?.length) rows = rows.filter((p) => filter.statuses!.includes(p.status));
-        if (filter.goalId) rows = rows.filter((p) => p.goalIds.includes(filter.goalId!));
+        let rows = db.projects.filter(
+          (p) => filter.includeArchived || !p.archived,
+        );
+        if (filter.areaId)
+          rows = rows.filter((p) => p.lifeAreaId === filter.areaId);
+        if (filter.statuses?.length)
+          rows = rows.filter((p) => filter.statuses!.includes(p.status));
+        if (filter.goalId)
+          rows = rows.filter((p) => p.goalIds.includes(filter.goalId!));
         if (filter.q) {
           const q = filter.q.toLowerCase();
-          rows = rows.filter((p) => p.title.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
+          rows = rows.filter(
+            (p) =>
+              p.title.toLowerCase().includes(q) ||
+              p.description.toLowerCase().includes(q),
+          );
         }
         return rows
-          .map((p) => ({ ...p, areaName: areaById(p.lifeAreaId)?.name ?? null }))
+          .map((p) => ({
+            ...p,
+            areaName: areaById(p.lifeAreaId)?.name ?? null,
+          }))
           .sort((a, b) => {
             const ac = a.status === "completed" ? 1 : 0;
             const bc = b.status === "completed" ? 1 : 0;
@@ -611,8 +1008,8 @@ export function createBrowserApi(): BiziApi {
           manualProgress: input.manualProgress ?? 0,
           createdAt: now(),
           updatedAt: now(),
-          completedAt: null,
-          archived: false,
+          completedAt: input.status === "completed" ? now() : null,
+          archived: input.archived ?? false,
           areaName: areaById(input.lifeAreaId)?.name ?? null,
           goalIds: input.goalIds ?? [],
           openTasks: 0,
@@ -635,33 +1032,72 @@ export function createBrowserApi(): BiziApi {
         save();
       },
       remove: async (id) => {
+        const removed = new Set(
+          db.tasks.filter((t) => t.projectId === id).map((t) => t.id),
+        );
+        let previous = -1;
+        while (previous !== removed.size) {
+          previous = removed.size;
+          for (const task of db.tasks)
+            if (task.parentTaskId && removed.has(task.parentTaskId))
+              removed.add(task.id);
+        }
+        db.tasks = db.tasks.filter((t) => !removed.has(t.id));
         db.projects = db.projects.filter((p) => p.id !== id);
         save();
       },
     },
     task: {
+      move: async (id, date, beforeId) => {
+        moveTask(id, date, beforeId);
+        save();
+      },
       list: async (filter: TaskFilter = {}) => {
-        let rows = [...db.tasks];        if (filter.statuses?.length) rows = rows.filter((t) => filter.statuses!.includes(t.status));
+        let rows = [...db.tasks];
+        if (filter.statuses?.length)
+          rows = rows.filter((t) => filter.statuses!.includes(t.status));
         const excluded = filter.excludeStatuses ?? ["completed", "cancelled"];
-        if (excluded.length) rows = rows.filter((t) => !excluded.includes(t.status));
-        if (filter.areaId) rows = rows.filter((t) => t.lifeAreaId === filter.areaId);
-        if (filter.projectId) rows = rows.filter((t) => t.projectId === filter.projectId);
-        if (filter.goalId) rows = rows.filter((t) => t.goalIds.includes(filter.goalId!));
-        if (filter.priority) rows = rows.filter((t) => t.priority === filter.priority);
-        if (filter.deadlineType) rows = rows.filter((t) => t.deadlineType === filter.deadlineType);
-        if (filter.scheduledFrom) rows = rows.filter((t) => t.scheduledDate && t.scheduledDate >= filter.scheduledFrom!);
-        if (filter.scheduledTo) rows = rows.filter((t) => t.scheduledDate && t.scheduledDate <= filter.scheduledTo!);
-        if (filter.dueFrom) rows = rows.filter((t) => t.dueDate && t.dueDate >= filter.dueFrom!);
-        if (filter.dueTo) rows = rows.filter((t) => t.dueDate && t.dueDate <= filter.dueTo!);
-        if (filter.parentId === "none") rows = rows.filter((t) => t.parentTaskId === null);
-        else if (filter.parentId) rows = rows.filter((t) => t.parentTaskId === filter.parentId);
+        if (excluded.length)
+          rows = rows.filter((t) => !excluded.includes(t.status));
+        if (filter.areaId)
+          rows = rows.filter((t) => t.lifeAreaId === filter.areaId);
+        if (filter.projectId)
+          rows = rows.filter((t) => t.projectId === filter.projectId);
+        if (filter.goalId)
+          rows = rows.filter((t) => t.goalIds.includes(filter.goalId!));
+        if (filter.priority)
+          rows = rows.filter((t) => t.priority === filter.priority);
+        if (filter.deadlineType)
+          rows = rows.filter((t) => t.deadlineType === filter.deadlineType);
+        if (filter.scheduledFrom)
+          rows = rows.filter(
+            (t) => t.scheduledDate && t.scheduledDate >= filter.scheduledFrom!,
+          );
+        if (filter.scheduledTo)
+          rows = rows.filter(
+            (t) => t.scheduledDate && t.scheduledDate <= filter.scheduledTo!,
+          );
+        if (filter.dueFrom)
+          rows = rows.filter((t) => t.dueDate && t.dueDate >= filter.dueFrom!);
+        if (filter.dueTo)
+          rows = rows.filter((t) => t.dueDate && t.dueDate <= filter.dueTo!);
+        if (filter.parentId === "none")
+          rows = rows.filter((t) => t.parentTaskId === null);
+        else if (filter.parentId)
+          rows = rows.filter((t) => t.parentTaskId === filter.parentId);
         if (!filter.includeArchived) rows = rows.filter((t) => !t.archived);
         if (filter.q) {
           const q = filter.q.toLowerCase();
-          rows = rows.filter((t) => t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
+          rows = rows.filter(
+            (t) =>
+              t.title.toLowerCase().includes(q) ||
+              t.description.toLowerCase().includes(q),
+          );
         }
         rows = sortTasks(rows).map(enrichTask);
-        return filter.limit ? rows.slice(0, filter.limit) : rows;
+        return filter.limit !== undefined && filter.limit < 0
+          ? rows
+          : rows.slice(0, filter.limit ?? 500);
       },
       get: async (id) => {
         const item = db.tasks.find((t) => t.id === id);
@@ -669,17 +1105,27 @@ export function createBrowserApi(): BiziApi {
       },
       counts: async (): Promise<TaskCounts> => {
         const t = todayISO();
-        const active = db.tasks.filter((x) => x.status !== "completed" && x.status !== "cancelled" && !x.archived);
+        const active = db.tasks.filter(
+          (x) =>
+            x.status !== "completed" && x.status !== "cancelled" && !x.archived,
+        );
         return {
-          today: active.filter((x) => x.scheduledDate === t || x.dueDate === t).length,
-          overdue: active.filter((x) => x.dueDate != null && x.dueDate < t).length,
-          inbox: db.tasks.filter((x) => x.status === "inbox" && !x.archived).length,
-          waiting: db.tasks.filter((x) => x.status === "waiting" && !x.archived).length,
+          today: active.filter((x) => x.scheduledDate === t || x.dueDate === t)
+            .length,
+          overdue: active.filter((x) => x.dueDate != null && x.dueDate < t)
+            .length,
+          inbox: db.tasks.filter((x) => x.status === "inbox" && !x.archived)
+            .length,
+          waiting: db.tasks.filter((x) => x.status === "waiting" && !x.archived)
+            .length,
         };
       },
       create: async (input: TaskInput) => {
         const item: Task = {
           id: uid(),
+          sortOrder: db.tasks.filter(
+            (t) => t.scheduledDate === (input.scheduledDate ?? null),
+          ).length,
           title: input.title,
           description: input.description ?? "",
           status: input.status ?? "todo",
@@ -695,8 +1141,8 @@ export function createBrowserApi(): BiziApi {
           parentTaskId: input.parentTaskId ?? null,
           createdAt: now(),
           updatedAt: now(),
-          completedAt: null,
-          archived: false,
+          completedAt: input.status === "completed" ? now() : null,
+          archived: input.archived ?? false,
           areaName: null,
           projectName: null,
           goalIds: input.goalIds ?? [],
@@ -708,6 +1154,11 @@ export function createBrowserApi(): BiziApi {
       update: async (id, patch: TaskPatch) => {
         const item = db.tasks.find((t) => t.id === id);
         if (!item) throw new Error("task not found");
+        if (
+          "scheduledDate" in patch &&
+          item.scheduledDate !== (patch.scheduledDate ?? null)
+        )
+          moveTask(id, patch.scheduledDate ?? null, null);
         const { goalIds, status, ...rest } = patch;
         Object.assign(item, rest, { updatedAt: now() });
         if (status !== undefined) {
@@ -718,7 +1169,15 @@ export function createBrowserApi(): BiziApi {
         save();
       },
       remove: async (id) => {
-        db.tasks = db.tasks.filter((t) => t.id !== id && t.parentTaskId !== id);
+        const removed = new Set([id]);
+        let previous = -1;
+        while (previous !== removed.size) {
+          previous = removed.size;
+          for (const task of db.tasks)
+            if (task.parentTaskId && removed.has(task.parentTaskId))
+              removed.add(task.id);
+        }
+        db.tasks = db.tasks.filter((t) => !removed.has(t.id));
         save();
       },
       setComplete: async (id, completed) => {
@@ -732,7 +1191,10 @@ export function createBrowserApi(): BiziApi {
     },
     habit: {
       list: async () =>
-        db.habits.map((h) => ({ ...h, areaName: areaById(h.lifeAreaId)?.name ?? null })),
+        db.habits.map((h) => ({
+          ...h,
+          areaName: areaById(h.lifeAreaId)?.name ?? null,
+        })),
       create: async (input: Partial<Habit> & { name: string }) => {
         const item: Habit = {
           id: uid(),
@@ -763,7 +1225,9 @@ export function createBrowserApi(): BiziApi {
       entries: async (from, to) =>
         db.habitEntries.filter((e) => e.date >= from && e.date <= to),
       toggle: async (habitId, date, completed, value = null) => {
-        const existing = db.habitEntries.find((e) => e.habitId === habitId && e.date === date);
+        const existing = db.habitEntries.find(
+          (e) => e.habitId === habitId && e.date === date,
+        );
         if (existing) {
           existing.completed = completed;
           existing.value = value;
@@ -779,9 +1243,13 @@ export function createBrowserApi(): BiziApi {
           .filter((r) => !type || r.reviewType === type)
           .sort((a, b) => (a.periodStart < b.periodStart ? 1 : -1)),
       get: async (type, periodStart) =>
-        db.reviews.find((r) => r.reviewType === type && r.periodStart === periodStart) ?? null,
+        db.reviews.find(
+          (r) => r.reviewType === type && r.periodStart === periodStart,
+        ) ?? null,
       save: async (type, periodStart, periodEnd, content: ReviewContent) => {
-        const existing = db.reviews.find((r) => r.reviewType === type && r.periodStart === periodStart);
+        const existing = db.reviews.find(
+          (r) => r.reviewType === type && r.periodStart === periodStart,
+        );
         if (existing) {
           existing.periodEnd = periodEnd;
           existing.content = content;
@@ -802,32 +1270,64 @@ export function createBrowserApi(): BiziApi {
       stats: async (from, to): Promise<ReviewStats> => {
         const t = todayISO();
         const completed = db.tasks.filter(
-          (x) => x.status === "completed" && x.completedAt && x.completedAt.slice(0, 10) >= from && x.completedAt.slice(0, 10) <= to,
+          (x) =>
+            x.status === "completed" &&
+            x.completedAt &&
+            x.completedAt.slice(0, 10) >= from &&
+            x.completedAt.slice(0, 10) <= to,
         );
-        const active = db.tasks.filter((x) => x.status !== "completed" && x.status !== "cancelled" && !x.archived);
+        const active = db.tasks.filter(
+          (x) =>
+            x.status !== "completed" && x.status !== "cancelled" && !x.archived,
+        );
         const touchedProjectIds = new Set(
           db.tasks
-            .filter((x) => x.updatedAt.slice(0, 10) >= from && x.updatedAt.slice(0, 10) <= to && x.projectId)
+            .filter(
+              (x) =>
+                x.updatedAt.slice(0, 10) >= from &&
+                x.updatedAt.slice(0, 10) <= to &&
+                x.projectId,
+            )
             .map((x) => x.projectId as string),
         );
-        const entries = db.habitEntries.filter((e) => e.date >= from && e.date <= to);
+        const entries = db.habitEntries.filter(
+          (e) => e.date >= from && e.date <= to,
+        );
         return {
           completed: completed.map((x) => ({ id: x.id, title: x.title })),
           completedCount: completed.length,
           overdue: active
             .filter((x) => x.dueDate != null && x.dueDate < t)
             .map((x) => ({ id: x.id, title: x.title, dueDate: x.dueDate })),
-          movedCount: db.tasks.filter((x) => x.updatedAt.slice(0, 10) >= from && x.updatedAt.slice(0, 10) <= to).length,
-          workedProjects: db.projects.filter((p) => touchedProjectIds.has(p.id)).map((p) => ({ id: p.id, title: p.title })),
+          movedCount: db.tasks.filter(
+            (x) =>
+              x.updatedAt.slice(0, 10) >= from &&
+              x.updatedAt.slice(0, 10) <= to,
+          ).length,
+          workedProjects: db.projects
+            .filter((p) => touchedProjectIds.has(p.id))
+            .map((p) => ({ id: p.id, title: p.title })),
           neglectedProjects: db.projects
-            .filter((p) => p.status === "active" && !p.archived && !touchedProjectIds.has(p.id))
+            .filter(
+              (p) =>
+                p.status === "active" &&
+                !p.archived &&
+                !touchedProjectIds.has(p.id),
+            )
             .map((p) => ({ id: p.id, title: p.title })),
           upcomingHard: active
-            .filter((x) => x.deadlineType === "hard" && x.dueDate != null && x.dueDate >= t)
+            .filter(
+              (x) =>
+                x.deadlineType === "hard" &&
+                x.dueDate != null &&
+                x.dueDate >= t,
+            )
             .sort((a, b) => (a.dueDate! < b.dueDate! ? -1 : 1))
             .slice(0, 10)
             .map((x) => ({ id: x.id, title: x.title, dueDate: x.dueDate })),
-          activeGoals: db.goals.filter((g) => g.status === "active" && !g.archived).length,
+          activeGoals: db.goals.filter(
+            (g) => g.status === "active" && !g.archived,
+          ).length,
           habits: {
             completed: entries.filter((e) => e.completed).length,
             total: entries.length,
@@ -837,14 +1337,24 @@ export function createBrowserApi(): BiziApi {
     },
     note: {
       get: async (entityType: EntityType, entityId) =>
-        db.notes.find((n) => n.entityType === entityType && n.entityId === entityId) ?? null,
+        db.notes.find(
+          (n) => n.entityType === entityType && n.entityId === entityId,
+        ) ?? null,
       save: async (entityType, entityId, content) => {
-        const existing = db.notes.find((n) => n.entityType === entityType && n.entityId === entityId);
+        const existing = db.notes.find(
+          (n) => n.entityType === entityType && n.entityId === entityId,
+        );
         if (existing) {
           existing.content = content;
           existing.updatedAt = now();
         } else {
-          db.notes.push({ id: uid(), entityType, entityId, content, updatedAt: now() });
+          db.notes.push({
+            id: uid(),
+            entityType,
+            entityId,
+            content,
+            updatedAt: now(),
+          });
         }
         save();
       },
@@ -852,38 +1362,81 @@ export function createBrowserApi(): BiziApi {
     search: {
       all: async (q): Promise<SearchResults> => {
         const needle = q.trim().toLowerCase();
-        if (!needle) return { tasks: [], projects: [], goals: [], areas: [], notes: [] };
-        const hit = (x: { id: string; title: string; status?: string }) => ({ id: x.id, title: x.title, status: x.status });
+        if (!needle)
+          return { tasks: [], projects: [], goals: [], areas: [], notes: [] };
+        const hit = (x: { id: string; title: string; status?: string }) => ({
+          id: x.id,
+          title: x.title,
+          status: x.status,
+        });
         return {
           tasks: db.tasks
-            .filter((t) => !t.archived && (t.title.toLowerCase().includes(needle) || t.description.toLowerCase().includes(needle)))
+            .filter(
+              (t) =>
+                !t.archived &&
+                (t.title.toLowerCase().includes(needle) ||
+                  t.description.toLowerCase().includes(needle)),
+            )
             .slice(0, 20)
             .map((t) => hit({ id: t.id, title: t.title, status: t.status })),
           projects: db.projects
-            .filter((p) => !p.archived && (p.title.toLowerCase().includes(needle) || p.description.toLowerCase().includes(needle)))
+            .filter(
+              (p) =>
+                !p.archived &&
+                (p.title.toLowerCase().includes(needle) ||
+                  p.description.toLowerCase().includes(needle)),
+            )
             .slice(0, 20)
             .map((p) => hit({ id: p.id, title: p.title, status: p.status })),
           goals: db.goals
-            .filter((g) => !g.archived && (g.title.toLowerCase().includes(needle) || g.description.toLowerCase().includes(needle)))
+            .filter(
+              (g) =>
+                !g.archived &&
+                (g.title.toLowerCase().includes(needle) ||
+                  g.description.toLowerCase().includes(needle)),
+            )
             .slice(0, 20)
             .map((g) => hit({ id: g.id, title: g.title, status: g.status })),
           areas: db.areas
-            .filter((a) => a.name.toLowerCase().includes(needle) || a.description.toLowerCase().includes(needle))
+            .filter(
+              (a) =>
+                a.name.toLowerCase().includes(needle) ||
+                a.description.toLowerCase().includes(needle),
+            )
             .slice(0, 20)
             .map((a) => ({ id: a.id, title: a.name })),
           notes: db.notes
             .filter((n) => n.content.toLowerCase().includes(needle))
             .slice(0, 20)
-            .map((n) => ({ entityType: n.entityType, entityId: n.entityId, title: n.content.slice(0, 120) })),
+            .map((n) => ({
+              entityType: n.entityType,
+              entityId: n.entityId,
+              title: n.content.slice(0, 120),
+            })),
         };
       },
     },
     bridge: {
       // The local AI bridge is a Tauri-only feature; the browser preview
       // reports it as disabled.
-      status: async () => ({ enabled: false, port: 1421, actualPort: null, running: false }),
-      setEnabled: async () => ({ enabled: false, port: 1421, actualPort: null, running: false }),
-      setPort: async () => ({ enabled: false, port: 1421, actualPort: null, running: false }),
+      status: async () => ({
+        enabled: false,
+        port: 1421,
+        actualPort: null,
+        running: false,
+      }),
+      setEnabled: async () => ({
+        enabled: false,
+        port: 1421,
+        actualPort: null,
+        running: false,
+      }),
+      setPort: async () => ({
+        enabled: false,
+        port: 1421,
+        actualPort: null,
+        running: false,
+      }),
       regenToken: async () => "unavailable in browser preview",
       getToken: async () => "unavailable in browser preview",
       log: async () => [],
@@ -892,4 +1445,51 @@ export function createBrowserApi(): BiziApi {
       dataDir: async () => "Browser preview (data in localStorage)",
     },
   };
+  for (const [kind, namespace] of Object.entries(api)) {
+    if (typeof namespace !== "object") continue;
+    const methods = namespace as Record<
+      string,
+      (...args: unknown[]) => Promise<unknown>
+    >;
+    for (const [name, method] of Object.entries(methods)) {
+      methods[name] = async (...args) => {
+        initialize();
+        const mutates = [
+          "create",
+          "update",
+          "remove",
+          "move",
+          "setComplete",
+          "toggle",
+          "save",
+        ].includes(name);
+        const before = mutates ? structuredClone(db) : null;
+        try {
+          if (
+            ["area", "goal", "project", "task", "habit"].includes(kind) &&
+            (name === "create" || name === "update")
+          ) {
+            const input = structuredClone(args[name === "create" ? 0 : 1]);
+            validateInput(kind, input, name === "create", exists);
+            args[name === "create" ? 0 : 1] = input;
+          }
+          if (
+            kind === "note" &&
+            name === "save" &&
+            (!["area", "goal", "project", "task", "review"].includes(
+              String(args[0]),
+            ) ||
+              !exists(String(args[0]), String(args[1])) ||
+              typeof args[2] !== "string")
+          )
+            throw new Error("Invalid note target or content");
+          return structuredClone(await method(...args));
+        } catch (error) {
+          if (before) db = before;
+          throw error;
+        }
+      };
+    }
+  }
+  return api;
 }

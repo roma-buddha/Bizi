@@ -63,6 +63,7 @@ pub struct ProjectRow {
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRow {
+    pub sort_order: i64,
     pub id: String,
     pub title: String,
     pub description: String,

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  WorkspaceSnapshot,
   AreaInput,
   AreaPatch,
   EntityType,
@@ -30,6 +31,7 @@ import type { HabitPatch } from "../models/types";
 import { createBrowserApi } from "./browser";
 
 export interface BiziApi {
+  snapshot(): Promise<WorkspaceSnapshot>;
   bridge: {
     status(): Promise<BridgeStatus>;
     setEnabled(enabled: boolean): Promise<BridgeStatus>;
@@ -57,6 +59,11 @@ export interface BiziApi {
     remove(id: string): Promise<void>;
   };
   task: {
+    move(
+      id: string,
+      scheduledDate: string | null,
+      beforeId: string | null,
+    ): Promise<void>;
     list(filter?: TaskFilter): Promise<Task[]>;
     get(id: string): Promise<Task | null>;
     counts(): Promise<TaskCounts>;
@@ -117,6 +124,7 @@ export interface BridgeStatus {
 }
 
 const tauriApi: BiziApi = {
+  snapshot: () => invoke<WorkspaceSnapshot>("workspace_snapshot"),
   bridge: {
     status: () => invoke<BridgeStatus>("bridge_status"),
     setEnabled: (enabled) =>
@@ -147,6 +155,8 @@ const tauriApi: BiziApi = {
     remove: (id) => invoke<void>("project_delete", { id }),
   },
   task: {
+    move: (id, scheduledDate, beforeId) =>
+      invoke<void>("task_move", { id, scheduledDate, beforeId }),
     list: (filter) => invoke<Task[]>("task_list", { filter: filter ?? {} }),
     get: (id) => invoke<Task | null>("task_get", { id }),
     counts: () => invoke<TaskCounts>("task_counts"),

@@ -1,7 +1,20 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { daysFor, pageDays, type ViewMode } from "../utils/planner";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+} from "react";
 import { CalendarRange, Check, ChevronDown } from "lucide-react";
-import { useStore, type DailyTask } from "../state/store";
-import { addDaysISO, numericDate, todayISO, weekdayLabel } from "../utils/date";
+import {
+  useStore,
+  UNSCHEDULED,
+  type TaskRef,
+  type DailyTask,
+} from "../state/store";
+import { numericDate, todayISO, weekdayLabel } from "../utils/date";
 
 const VIEW_KEY = "bizi.planner-view";
 const DRAG_TYPE = "application/x-bizi-daily-task";
@@ -14,7 +27,7 @@ const VIEW_MODES = [
   { id: "twoYears", label: "2 Years" },
 ] as const;
 
-type ViewMode = (typeof VIEW_MODES)[number]["id"];
+const EMPTY_TASKS: DailyTask[] = [];
 
 function loadView(): ViewMode {
   const saved = localStorage.getItem(VIEW_KEY);
@@ -35,38 +48,12 @@ function readPayload(e: DragEvent): DragPayload | null {
   }
 }
 
-/** The days to show for a view mode. Month shows the full calendar month;
- *  Week starts on Monday of the current week. */
-function daysFor(mode: ViewMode, today: string): string[] {
-  const [y, m] = today.split("-");
-  let start = today;
-  let end: string;
-  if (mode === "day") {
-    end = today;
-  } else if (mode === "week") {
-    const d = new Date(today + "T00:00:00");
-    const sinceMonday = (d.getDay() + 6) % 7; // Monday = 0
-    start = addDaysISO(today, -sinceMonday);
-    end = addDaysISO(start, 6);
-  } else if (mode === "month") {
-    const last = new Date(Number(y), Number(m), 0).getDate();
-    start = `${y}-${m}-01`;
-    end = `${y}-${m}-${String(last).padStart(2, "0")}`;
-  } else if (mode === "year") {
-    end = `${y}-12-31`;
-  } else {
-    end = addDaysISO(today, 730);
-  }
-  const out: string[] = [];
-  for (let cursor = start; cursor <= end; cursor = addDaysISO(cursor, 1)) {
-    out.push(cursor);
-  }
-  return out;
-}
-
 export function PlannerPage() {
-  const { byDay, toggleTask, moveTask } = useStore();
+  const { byDay, toggleTask, moveTask, addTask, openDetail, updateTask } =
+    useStore();
   const [view, setView] = useState<ViewMode>(loadView);
+  const [page, setPage] = useState(0);
+  const [archived, setArchived] = useState(false);
   // Live date: re-reads the system clock so "today" is always real,
   // even if the app stays open overnight.
   const [today, setToday] = useState(todayISO);
@@ -81,6 +68,7 @@ export function PlannerPage() {
 
   const changeView = (next: ViewMode) => {
     setView(next);
+    setPage(0);
     try {
       localStorage.setItem(VIEW_KEY, next);
     } catch {
@@ -88,7 +76,18 @@ export function PlannerPage() {
     }
   };
 
-  const days = daysFor(view, today);
+  const allDays = useMemo(() => daysFor(view, today), [view, today]);
+  const longRange = view === "year" || view === "twoYears";
+  const days = longRange ? pageDays(allDays, page) : allDays;
+  const special = archived
+    ? Object.entries(byDay).flatMap(([dateISO, tasks]) =>
+        tasks.filter((t) => t.archived).map((task) => ({ task, dateISO })),
+      )
+    : (byDay[UNSCHEDULED] ?? [])
+        .filter(
+          (t) => !t.archived && t.status !== "done" && t.status !== "cancelled",
+        )
+        .map((task) => ({ task, dateISO: UNSCHEDULED }));
 
   // Tasks assigned to days before today that were never marked done;
   // they are collected into the Unfulfilled bucket and hidden from
@@ -97,7 +96,9 @@ export function PlannerPage() {
     .filter(([date]) => date < today)
     .flatMap(([dateISO, tasks]) =>
       tasks
-        .filter((t) => t.status !== "done" && t.status !== "cancelled" && !t.archived)
+        .filter(
+          (t) => t.status !== "done" && t.status !== "cancelled" && !t.archived,
+        )
         .map((task) => ({ task, dateISO })),
     )
     .sort((a, b) => a.dateISO.localeCompare(b.dateISO));
@@ -106,13 +107,86 @@ export function PlannerPage() {
     <div className="page">
       <div className="planner-toolbar">
         <ViewMenu value={view} onChange={changeView} />
+        <button
+          className="button small ghost"
+          onClick={() => setArchived(!archived)}
+        >
+          {archived ? "Show active tasks" : "Archived tasks"}
+        </button>
+        {longRange && !archived ? (
+          <div className="planner-pages">
+            <button
+              className="button small"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              Previous
+            </button>
+            <span>
+              {numericDate(days[0])} – {numericDate(days[days.length - 1])}
+            </span>
+            <button
+              className="button small"
+              disabled={(page + 1) * 60 >= allDays.length}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </button>
+          </div>
+        ) : null}
       </div>
-      {unfulfilled.length > 0 ? (
-        <section className="agenda-card agenda-unfulfilled" aria-label="Unfulfilled tasks">
+      {special.length > 0 || archived ? (
+        <section
+          className="agenda-card"
+          aria-label={archived ? "Archived tasks" : "Unscheduled tasks"}
+        >
+          <div className="agenda-head">
+            <span className="agenda-weekday">
+              {archived ? "Archived tasks" : "Unscheduled"}
+            </span>
+          </div>
+          <div className="agenda-body">
+            <div className="agenda-rows">
+              {special.map(({ task, dateISO }) => (
+                <div key={task.id}>
+                  <TaskRow
+                    task={task}
+                    sourceDate={dateISO}
+                    onToggle={toggleTask}
+                    onOpen={openDetail}
+                    onDropBefore={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onDragOverRow={(event) => event.preventDefault()}
+                  />
+                  {archived ? (
+                    <button
+                      className="button small"
+                      onClick={() => {
+                        void updateTask(dateISO, task.id, { archived: false });
+                      }}
+                    >
+                      Restore
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+              {archived && !special.length ? <p>No archived tasks.</p> : null}
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {!archived && unfulfilled.length > 0 ? (
+        <section
+          className="agenda-card agenda-unfulfilled"
+          aria-label="Unfulfilled tasks"
+        >
           <div className="agenda-head">
             <span className="agenda-weekday">Unfulfilled</span>
             <span className="agenda-date">
-              {unfulfilled.length} task{unfulfilled.length === 1 ? "" : "s"} carried over
+              {unfulfilled.length} task{unfulfilled.length === 1 ? "" : "s"}{" "}
+              carried over
             </span>
           </div>
           <div className="agenda-body">
@@ -122,7 +196,8 @@ export function PlannerPage() {
                   key={task.id}
                   task={task}
                   sourceDate={dateISO}
-                  onToggle={() => toggleTask(dateISO, task.id)}
+                  onToggle={toggleTask}
+                  onOpen={openDetail}
                   onDropBefore={(e) => e.preventDefault()}
                   onDragOverRow={(e) => e.preventDefault()}
                 />
@@ -131,28 +206,39 @@ export function PlannerPage() {
           </div>
         </section>
       ) : null}
-      {days.map((day) => (
-        <DayCard
-          key={`${view}:${day}`}
-          dateISO={day}
-          isPast={day < today}
-          isToday={day === today}
-          tasks={byDay[day] ?? []}
-          onMove={moveTask}
-        />
-      ))}
+      {!archived &&
+        days.map((day) => (
+          <DayCard
+            key={`${view}:${day}`}
+            dateISO={day}
+            isPast={day < today}
+            isToday={day === today}
+            tasks={byDay[day] ?? EMPTY_TASKS}
+            onMove={moveTask}
+            onAdd={addTask}
+            onToggle={toggleTask}
+            onOpen={openDetail}
+          />
+        ))}
     </div>
   );
 }
 
-function ViewMenu({ value, onChange }: { value: ViewMode; onChange: (mode: ViewMode) => void }) {
+function ViewMenu({
+  value,
+  onChange,
+}: {
+  value: ViewMode;
+  onChange: (mode: ViewMode) => void;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -192,7 +278,9 @@ function ViewMenu({ value, onChange }: { value: ViewMode; onChange: (mode: ViewM
                 setOpen(false);
               }}
             >
-              <span className="view-menu-check">{mode.id === value ? <Check size={13} /> : null}</span>
+              <span className="view-menu-check">
+                {mode.id === value ? <Check size={13} /> : null}
+              </span>
               {mode.label}
             </button>
           ))}
@@ -202,20 +290,30 @@ function ViewMenu({ value, onChange }: { value: ViewMode; onChange: (mode: ViewM
   );
 }
 
-function DayCard({
+const DayCard = memo(function DayCard({
   dateISO,
   isPast,
   isToday,
   tasks,
   onMove,
+  onAdd,
+  onToggle,
+  onOpen,
 }: {
   dateISO: string;
   isPast: boolean;
   isToday: boolean;
   tasks: DailyTask[];
-  onMove: (sourceDate: string, targetDate: string, id: string, index?: number) => void;
+  onMove: (
+    sourceDate: string,
+    targetDate: string,
+    id: string,
+    index?: number,
+  ) => Promise<boolean>;
+  onAdd: (dateISO: string, title: string) => Promise<string | null>;
+  onToggle: (dateISO: string, id: string) => Promise<boolean>;
+  onOpen: (ref: TaskRef) => void;
 }) {
-  const { addTask, toggleTask } = useStore();
   const [draft, setDraft] = useState("");
   const [dropActive, setDropActive] = useState(false);
   const depth = useRef(0);
@@ -227,11 +325,17 @@ function DayCard({
     if (isToday) cardRef.current?.scrollIntoView({ block: "nearest" });
   }, [isToday]);
 
-  const submit = () => {
+  const submitting = useRef(false);
+  const submit = async () => {
     const trimmed = draft.trim();
-    if (!trimmed) return;
-    addTask(dateISO, trimmed);
-    setDraft("");
+    if (!trimmed || submitting.current) return;
+    submitting.current = true;
+    try {
+      if (await onAdd(dateISO, trimmed))
+        setDraft((previous) => (previous === trimmed ? "" : previous));
+    } finally {
+      submitting.current = false;
+    }
   };
 
   const acceptDrop = (e: DragEvent) => {
@@ -241,16 +345,31 @@ function DayCard({
 
   const handleDrop = (e: DragEvent, index?: number) => {
     e.preventDefault();
+    e.stopPropagation();
     depth.current = 0;
     setDropActive(false);
     const payload = readPayload(e);
     if (!payload) return;
-    onMove(payload.sourceDate, dateISO, payload.id, index);
+    const before =
+      index === undefined
+        ? undefined
+        : tasks
+            .filter((t) => !t.archived)
+            .filter((t) => t.id !== payload.id)
+            .findIndex((t) => t.id === visibleTasks[index]?.id);
+    void onMove(
+      payload.sourceDate,
+      dateISO,
+      payload.id,
+      before === -1 ? undefined : before,
+    );
   };
 
   // Past days keep only completed history; open tasks moved to the bucket.
   // Archived tasks are hidden everywhere in the planner.
-  const visibleTasks = (isPast ? tasks.filter((t) => t.status === "done") : tasks).filter((t) => !t.archived);
+  const visibleTasks = (
+    isPast ? tasks.filter((t) => t.status === "done") : tasks
+  ).filter((t) => !t.archived);
 
   return (
     <section
@@ -283,7 +402,8 @@ function DayCard({
               key={task.id}
               task={task}
               sourceDate={dateISO}
-              onToggle={() => toggleTask(dateISO, task.id)}
+              onToggle={onToggle}
+              onOpen={onOpen}
               onDropBefore={(e) => handleDrop(e, index)}
               onDragOverRow={acceptDrop}
             />
@@ -312,22 +432,23 @@ function DayCard({
       </div>
     </section>
   );
-}
+});
 
-function TaskRow({
+const TaskRow = memo(function TaskRow({
   task,
   sourceDate,
   onToggle,
+  onOpen,
   onDropBefore,
   onDragOverRow,
 }: {
   task: DailyTask;
   sourceDate: string;
-  onToggle: () => void;
+  onToggle: (dateISO: string, id: string) => Promise<boolean>;
+  onOpen: (ref: TaskRef) => void;
   onDropBefore: (e: DragEvent) => void;
   onDragOverRow: (e: DragEvent) => void;
 }) {
-  const { openDetail } = useStore();
   const [dragging, setDragging] = useState(false);
   const done = task.status === "done";
 
@@ -336,7 +457,10 @@ function TaskRow({
       className={`agenda-row${done ? " completed" : ""}${dragging ? " dragging" : ""}`}
       draggable
       onDragStart={(e) => {
-        e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ id: task.id, sourceDate }));
+        e.dataTransfer.setData(
+          DRAG_TYPE,
+          JSON.stringify({ id: task.id, sourceDate }),
+        );
         e.dataTransfer.effectAllowed = "move";
         setDragging(true);
       }}
@@ -349,11 +473,16 @@ function TaskRow({
         className="task-checkbox"
         checked={done}
         aria-label={done ? "Mark as not done" : "Mark as done"}
-        onChange={onToggle}
+        onChange={() => {
+          void onToggle(sourceDate, task.id);
+        }}
       />
-      <button className="agenda-title" onClick={() => openDetail({ dateISO: sourceDate, id: task.id })}>
+      <button
+        className="agenda-title"
+        onClick={() => onOpen({ dateISO: sourceDate, id: task.id })}
+      >
         {task.title}
       </button>
     </div>
   );
-}
+});

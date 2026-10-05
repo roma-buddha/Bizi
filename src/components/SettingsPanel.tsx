@@ -2,13 +2,8 @@ import { Copy, Eye, EyeOff, KeyRound, RefreshCw, Settings } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type BridgeStatus } from "../db";
 import { isTauriRuntime } from "../runtime";
+import { useStore } from "../state/store";
 import { Modal } from "./ui";
-
-const fire = (promise: Promise<unknown>) => {
-  promise.catch(() => {
-    // Backend unreachable: keep the previous local state.
-  });
-};
 
 interface LogEntry {
   ts: string;
@@ -53,6 +48,13 @@ export function SettingsButton() {
 
 function SettingsPanel({ onClose }: { onClose: () => void }) {
   const tauri = isTauriRuntime();
+  const { reportError } = useStore();
+  const fire = useCallback(
+    (promise: Promise<unknown>) => {
+      void promise.catch(reportError);
+    },
+    [reportError],
+  );
   const [status, setStatus] = useState<BridgeStatus | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [showToken, setShowToken] = useState(false);
@@ -63,7 +65,7 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
     if (!tauri) return;
     fire(api.bridge.status().then(setStatus));
     fire(api.bridge.log().then(setLogLines));
-  }, [tauri]);
+  }, [tauri, fire]);
 
   useEffect(() => {
     refresh();
