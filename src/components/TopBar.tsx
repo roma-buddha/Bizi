@@ -3,6 +3,7 @@ import { Moon, PanelLeft, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isTauriRuntime } from "../runtime";
 import { useStore } from "../state/store";
+import { SettingsButton } from "./SettingsPanel";
 
 export function TopBar() {
   const { toggleSidebar, theme, toggleTheme } = useStore();
@@ -29,6 +30,7 @@ export function TopBar() {
       </button>
       <span className="app-name">Bizi</span>
       <div className="topbar-spacer" data-tauri-drag-region />
+      <SettingsButton />
       <button
         className="icon-button"
         onClick={toggleTheme}

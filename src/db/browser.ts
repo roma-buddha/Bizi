@@ -878,6 +878,16 @@ export function createBrowserApi(): BiziApi {
         };
       },
     },
+    bridge: {
+      // The local AI bridge is a Tauri-only feature; the browser preview
+      // reports it as disabled.
+      status: async () => ({ enabled: false, port: 1421, actualPort: null, running: false }),
+      setEnabled: async () => ({ enabled: false, port: 1421, actualPort: null, running: false }),
+      setPort: async () => ({ enabled: false, port: 1421, actualPort: null, running: false }),
+      regenToken: async () => "unavailable in browser preview",
+      getToken: async () => "unavailable in browser preview",
+      log: async () => [],
+    },
     app: {
       dataDir: async () => "Browser preview (data in localStorage)",
     },

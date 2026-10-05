@@ -1,5 +1,6 @@
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::db::{new_id, now_iso, today, AppState};
@@ -12,7 +13,7 @@ fn err(e: rusqlite::Error) -> String {
 }
 
 fn lock<'a>(
-    state: &'a tauri::State<'a, AppState>,
+    state: &'a tauri::State<'a, Arc<AppState>>,
 ) -> CmdResult<std::sync::MutexGuard<'a, Connection>> {
     state.conn.lock().map_err(|e| e.to_string())
 }
@@ -76,12 +77,10 @@ fn apply_patch(
 
 // ---------------------------------------------------------------- areas
 
-#[tauri::command]
-pub fn area_list(
-    state: tauri::State<AppState>,
+pub(crate) fn area_list_impl(
+    conn: &Connection,
     include_archived: Option<bool>,
 ) -> CmdResult<Vec<AreaRow>> {
-    let conn = lock(&state)?;
     let mut sql = String::from(
         "SELECT id, name, description, icon, color, sort_order, created_at, updated_at, archived FROM life_areas",
     );
@@ -110,8 +109,15 @@ pub fn area_list(
 }
 
 #[tauri::command]
-pub fn area_create(state: tauri::State<AppState>, input: Value) -> CmdResult<AreaRow> {
+pub fn area_list(
+    state: tauri::State<Arc<AppState>>,
+    include_archived: Option<bool>,
+) -> CmdResult<Vec<AreaRow>> {
     let conn = lock(&state)?;
+    area_list_impl(&conn, include_archived)
+}
+
+pub(crate) fn area_create_impl(conn: &Connection, input: Value) -> CmdResult<AreaRow> {
     let id = new_id();
     let name = required_string(&input, "name")?;
     let now = now_iso();
@@ -149,10 +155,14 @@ pub fn area_create(state: tauri::State<AppState>, input: Value) -> CmdResult<Are
 }
 
 #[tauri::command]
-pub fn area_update(state: tauri::State<AppState>, id: String, patch: Value) -> CmdResult<()> {
+pub fn area_create(state: tauri::State<Arc<AppState>>, input: Value) -> CmdResult<AreaRow> {
     let conn = lock(&state)?;
+    area_create_impl(&conn, input)
+}
+
+pub(crate) fn area_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
     apply_patch(
-        &conn,
+        conn,
         "life_areas",
         &id,
         &patch,
@@ -168,11 +178,21 @@ pub fn area_update(state: tauri::State<AppState>, id: String, patch: Value) -> C
 }
 
 #[tauri::command]
-pub fn area_delete(state: tauri::State<AppState>, id: String) -> CmdResult<()> {
+pub fn area_update(state: tauri::State<Arc<AppState>>, id: String, patch: Value) -> CmdResult<()> {
     let conn = lock(&state)?;
+    area_update_impl(&conn, id, patch)
+}
+
+pub(crate) fn area_delete_impl(conn: &Connection, id: String) -> CmdResult<()> {
     conn.execute("DELETE FROM life_areas WHERE id = ?1", params![id])
         .map_err(err)?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn area_delete(state: tauri::State<Arc<AppState>>, id: String) -> CmdResult<()> {
+    let conn = lock(&state)?;
+    area_delete_impl(&conn, id)
 }
 
 // ---------------------------------------------------------------- goals
@@ -200,12 +220,10 @@ fn map_goal_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<GoalRow> {
 
 const GOAL_SELECT: &str = "SELECT g.id, g.title, g.description, g.life_area_id, g.status, g.priority, g.start_date, g.target_date, g.progress_mode, g.manual_progress, g.created_at, g.updated_at, g.completed_at, g.archived, la.name, (SELECT GROUP_CONCAT(project_id) FROM goal_projects gp WHERE gp.goal_id = g.id) FROM goals g LEFT JOIN life_areas la ON la.id = g.life_area_id";
 
-#[tauri::command]
-pub fn goal_list(
-    state: tauri::State<AppState>,
+pub(crate) fn goal_list_impl(
+    conn: &Connection,
     include_archived: Option<bool>,
 ) -> CmdResult<Vec<GoalRow>> {
-    let conn = lock(&state)?;
     let mut sql = String::from(GOAL_SELECT);
     if !include_archived.unwrap_or(false) {
         sql.push_str(" WHERE g.archived = 0");
@@ -223,8 +241,15 @@ pub fn goal_list(
 }
 
 #[tauri::command]
-pub fn goal_create(state: tauri::State<AppState>, input: Value) -> CmdResult<GoalRow> {
+pub fn goal_list(
+    state: tauri::State<Arc<AppState>>,
+    include_archived: Option<bool>,
+) -> CmdResult<Vec<GoalRow>> {
     let conn = lock(&state)?;
+    goal_list_impl(&conn, include_archived)
+}
+
+pub(crate) fn goal_create_impl(conn: &Connection, input: Value) -> CmdResult<GoalRow> {
     let id = new_id();
     let now = now_iso();
     conn.execute(
@@ -255,7 +280,13 @@ pub fn goal_create(state: tauri::State<AppState>, input: Value) -> CmdResult<Goa
             }
         }
     }
-    get_goal(&conn, &id)
+    get_goal(conn, &id)
+}
+
+#[tauri::command]
+pub fn goal_create(state: tauri::State<Arc<AppState>>, input: Value) -> CmdResult<GoalRow> {
+    let conn = lock(&state)?;
+    goal_create_impl(&conn, input)
 }
 
 fn get_goal(conn: &Connection, id: &str) -> CmdResult<GoalRow> {
@@ -265,11 +296,9 @@ fn get_goal(conn: &Connection, id: &str) -> CmdResult<GoalRow> {
     stmt.query_row(params![id], map_goal_row).map_err(err)
 }
 
-#[tauri::command]
-pub fn goal_update(state: tauri::State<AppState>, id: String, patch: Value) -> CmdResult<()> {
-    let conn = lock(&state)?;
+pub(crate) fn goal_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
     apply_patch(
-        &conn,
+        conn,
         "goals",
         &id,
         &patch,
@@ -315,11 +344,21 @@ pub fn goal_update(state: tauri::State<AppState>, id: String, patch: Value) -> C
 }
 
 #[tauri::command]
-pub fn goal_delete(state: tauri::State<AppState>, id: String) -> CmdResult<()> {
+pub fn goal_update(state: tauri::State<Arc<AppState>>, id: String, patch: Value) -> CmdResult<()> {
     let conn = lock(&state)?;
+    goal_update_impl(&conn, id, patch)
+}
+
+pub(crate) fn goal_delete_impl(conn: &Connection, id: String) -> CmdResult<()> {
     conn.execute("DELETE FROM goals WHERE id = ?1", params![id])
         .map_err(err)?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn goal_delete(state: tauri::State<Arc<AppState>>, id: String) -> CmdResult<()> {
+    let conn = lock(&state)?;
+    goal_delete_impl(&conn, id)
 }
 
 // ---------------------------------------------------------------- projects
@@ -351,12 +390,10 @@ fn map_project_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectRow> {
 
 const PROJECT_SELECT: &str = "SELECT p.id, p.title, p.description, p.life_area_id, p.status, p.priority, p.icon, p.color, p.start_date, p.target_date, p.progress_mode, p.manual_progress, p.created_at, p.updated_at, p.completed_at, p.archived, la.name, (SELECT GROUP_CONCAT(goal_id) FROM goal_projects gp WHERE gp.project_id = p.id), (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status NOT IN ('completed','cancelled') AND t.archived = 0), (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.archived = 0) FROM projects p LEFT JOIN life_areas la ON la.id = p.life_area_id";
 
-#[tauri::command]
-pub fn project_list(
-    state: tauri::State<AppState>,
+pub(crate) fn project_list_impl(
+    conn: &Connection,
     filter: Option<Value>,
 ) -> CmdResult<Vec<ProjectRow>> {
-    let conn = lock(&state)?;
     let mut sql = String::from(PROJECT_SELECT);
     let mut where_clauses: Vec<String> = Vec::new();
     let mut vals: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -413,13 +450,20 @@ pub fn project_list(
     Ok(rows)
 }
 
+#[tauri::command]
+pub fn project_list(
+    state: tauri::State<Arc<AppState>>,
+    filter: Option<Value>,
+) -> CmdResult<Vec<ProjectRow>> {
+    let conn = lock(&state)?;
+    project_list_impl(&conn, filter)
+}
+
 fn like_escape(q: &str) -> String {
     q.replace('%', "\\%").replace('_', "\\_")
 }
 
-#[tauri::command]
-pub fn project_create(state: tauri::State<AppState>, input: Value) -> CmdResult<ProjectRow> {
-    let conn = lock(&state)?;
+pub(crate) fn project_create_impl(conn: &Connection, input: Value) -> CmdResult<ProjectRow> {
     let id = new_id();
     let now = now_iso();
     conn.execute(
@@ -452,7 +496,7 @@ pub fn project_create(state: tauri::State<AppState>, input: Value) -> CmdResult<
             }
         }
     }
-    get_project(&conn, &id)
+    get_project(conn, &id)
 }
 
 fn get_project(conn: &Connection, id: &str) -> CmdResult<ProjectRow> {
@@ -463,10 +507,14 @@ fn get_project(conn: &Connection, id: &str) -> CmdResult<ProjectRow> {
 }
 
 #[tauri::command]
-pub fn project_update(state: tauri::State<AppState>, id: String, patch: Value) -> CmdResult<()> {
+pub fn project_create(state: tauri::State<Arc<AppState>>, input: Value) -> CmdResult<ProjectRow> {
     let conn = lock(&state)?;
+    project_create_impl(&conn, input)
+}
+
+pub(crate) fn project_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
     apply_patch(
-        &conn,
+        conn,
         "projects",
         &id,
         &patch,
@@ -507,7 +555,7 @@ pub fn project_update(state: tauri::State<AppState>, id: String, patch: Value) -
             if let Some(gid) = gid.as_str() {
                 conn.execute(
                     "INSERT OR IGNORE INTO goal_projects (goal_id, project_id) VALUES (?1,?2)",
-                    params![gid, id],
+                    params![id, gid],
                 )
                 .map_err(err)?;
             }
@@ -517,11 +565,25 @@ pub fn project_update(state: tauri::State<AppState>, id: String, patch: Value) -
 }
 
 #[tauri::command]
-pub fn project_delete(state: tauri::State<AppState>, id: String) -> CmdResult<()> {
+pub fn project_update(
+    state: tauri::State<Arc<AppState>>,
+    id: String,
+    patch: Value,
+) -> CmdResult<()> {
     let conn = lock(&state)?;
+    project_update_impl(&conn, id, patch)
+}
+
+pub(crate) fn project_delete_impl(conn: &Connection, id: String) -> CmdResult<()> {
     conn.execute("DELETE FROM projects WHERE id = ?1", params![id])
         .map_err(err)?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn project_delete(state: tauri::State<Arc<AppState>>, id: String) -> CmdResult<()> {
+    let conn = lock(&state)?;
+    project_delete_impl(&conn, id)
 }
 
 // ---------------------------------------------------------------- tasks
@@ -554,9 +616,7 @@ fn map_task_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRow> {
 
 const TASK_SELECT: &str = "SELECT t.id, t.title, t.description, t.status, t.life_area_id, t.project_id, t.scheduled_date, t.due_date, t.deadline_type, t.priority, t.estimated_minutes, t.actual_minutes, t.recurrence_rule, t.parent_task_id, t.created_at, t.updated_at, t.completed_at, t.archived, la.name, p.title, (SELECT GROUP_CONCAT(goal_id) FROM task_goals tg WHERE tg.task_id = t.id) FROM tasks t LEFT JOIN life_areas la ON la.id = t.life_area_id LEFT JOIN projects p ON p.id = t.project_id";
 
-#[tauri::command]
-pub fn task_list(state: tauri::State<AppState>, filter: Option<Value>) -> CmdResult<Vec<TaskRow>> {
-    let conn = lock(&state)?;
+pub(crate) fn task_list_impl(conn: &Connection, filter: Option<Value>) -> CmdResult<Vec<TaskRow>> {
     let filter = filter.unwrap_or(json!({}));
     let mut where_clauses: Vec<String> = Vec::new();
     let mut vals: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -678,8 +738,15 @@ pub fn task_list(state: tauri::State<AppState>, filter: Option<Value>) -> CmdRes
 }
 
 #[tauri::command]
-pub fn task_counts(state: tauri::State<AppState>) -> CmdResult<Value> {
+pub fn task_list(
+    state: tauri::State<Arc<AppState>>,
+    filter: Option<Value>,
+) -> CmdResult<Vec<TaskRow>> {
     let conn = lock(&state)?;
+    task_list_impl(&conn, filter)
+}
+
+pub(crate) fn task_counts_impl(conn: &Connection) -> CmdResult<Value> {
     let today = today();
     let active = "status NOT IN ('completed','cancelled') AND archived = 0";
     let today_count: i64 = conn
@@ -711,7 +778,7 @@ pub fn task_counts(state: tauri::State<AppState>) -> CmdResult<Value> {
         .map_err(err)?;
     let waiting: i64 = conn
         .query_row(
-            &format!("SELECT COUNT(*) FROM tasks WHERE status = 'waiting' AND archived = 0"),
+            "SELECT COUNT(*) FROM tasks WHERE status = 'waiting' AND archived = 0",
             [],
             |r| r.get(0),
         )
@@ -720,8 +787,12 @@ pub fn task_counts(state: tauri::State<AppState>) -> CmdResult<Value> {
 }
 
 #[tauri::command]
-pub fn task_create(state: tauri::State<AppState>, input: Value) -> CmdResult<TaskRow> {
+pub fn task_counts(state: tauri::State<Arc<AppState>>) -> CmdResult<Value> {
     let conn = lock(&state)?;
+    task_counts_impl(&conn)
+}
+
+pub(crate) fn task_create_impl(conn: &Connection, input: Value) -> CmdResult<TaskRow> {
     let id = new_id();
     let now = now_iso();
     conn.execute(
@@ -756,7 +827,7 @@ pub fn task_create(state: tauri::State<AppState>, input: Value) -> CmdResult<Tas
             }
         }
     }
-    get_task(&conn, &id)
+    get_task(conn, &id)
 }
 
 fn get_task(conn: &Connection, id: &str) -> CmdResult<TaskRow> {
@@ -767,8 +838,12 @@ fn get_task(conn: &Connection, id: &str) -> CmdResult<TaskRow> {
 }
 
 #[tauri::command]
-pub fn task_get(state: tauri::State<AppState>, id: String) -> CmdResult<Option<TaskRow>> {
+pub fn task_create(state: tauri::State<Arc<AppState>>, input: Value) -> CmdResult<TaskRow> {
     let conn = lock(&state)?;
+    task_create_impl(&conn, input)
+}
+
+pub(crate) fn task_get_impl(conn: &Connection, id: String) -> CmdResult<Option<TaskRow>> {
     let mut stmt = conn
         .prepare(&format!("{} WHERE t.id = ?1", TASK_SELECT))
         .map_err(err)?;
@@ -780,10 +855,14 @@ pub fn task_get(state: tauri::State<AppState>, id: String) -> CmdResult<Option<T
 }
 
 #[tauri::command]
-pub fn task_update(state: tauri::State<AppState>, id: String, patch: Value) -> CmdResult<()> {
+pub fn task_get(state: tauri::State<Arc<AppState>>, id: String) -> CmdResult<Option<TaskRow>> {
     let conn = lock(&state)?;
+    task_get_impl(&conn, id)
+}
+
+pub(crate) fn task_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
     apply_patch(
-        &conn,
+        conn,
         "tasks",
         &id,
         &patch,
@@ -833,12 +912,16 @@ pub fn task_update(state: tauri::State<AppState>, id: String, patch: Value) -> C
 }
 
 #[tauri::command]
-pub fn task_set_complete(
-    state: tauri::State<AppState>,
+pub fn task_update(state: tauri::State<Arc<AppState>>, id: String, patch: Value) -> CmdResult<()> {
+    let conn = lock(&state)?;
+    task_update_impl(&conn, id, patch)
+}
+
+pub(crate) fn task_set_complete_impl(
+    conn: &Connection,
     id: String,
     completed: bool,
 ) -> CmdResult<()> {
-    let conn = lock(&state)?;
     let status = if completed { "completed" } else { "todo" };
     let completed_at = if completed { Some(now_iso()) } else { None };
     conn.execute(
@@ -850,18 +933,30 @@ pub fn task_set_complete(
 }
 
 #[tauri::command]
-pub fn task_delete(state: tauri::State<AppState>, id: String) -> CmdResult<()> {
+pub fn task_set_complete(
+    state: tauri::State<Arc<AppState>>,
+    id: String,
+    completed: bool,
+) -> CmdResult<()> {
     let conn = lock(&state)?;
+    task_set_complete_impl(&conn, id, completed)
+}
+
+pub(crate) fn task_delete_impl(conn: &Connection, id: String) -> CmdResult<()> {
     conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])
         .map_err(err)?;
     Ok(())
 }
 
+#[tauri::command]
+pub fn task_delete(state: tauri::State<Arc<AppState>>, id: String) -> CmdResult<()> {
+    let conn = lock(&state)?;
+    task_delete_impl(&conn, id)
+}
+
 // ---------------------------------------------------------------- habits
 
-#[tauri::command]
-pub fn habit_list(state: tauri::State<AppState>) -> CmdResult<Vec<HabitRow>> {
-    let conn = lock(&state)?;
+pub(crate) fn habit_list_impl(conn: &Connection) -> CmdResult<Vec<HabitRow>> {
     let mut stmt = conn
         .prepare(
             "SELECT h.id, h.name, h.life_area_id, h.frequency_type, h.frequency_rule, h.start_date, h.status, h.created_at, la.name FROM habits h LEFT JOIN life_areas la ON la.id = h.life_area_id ORDER BY h.name COLLATE NOCASE",
@@ -887,8 +982,12 @@ pub fn habit_list(state: tauri::State<AppState>) -> CmdResult<Vec<HabitRow>> {
 }
 
 #[tauri::command]
-pub fn habit_create(state: tauri::State<AppState>, input: Value) -> CmdResult<HabitRow> {
+pub fn habit_list(state: tauri::State<Arc<AppState>>) -> CmdResult<Vec<HabitRow>> {
     let conn = lock(&state)?;
+    habit_list_impl(&conn)
+}
+
+pub(crate) fn habit_create_impl(conn: &Connection, input: Value) -> CmdResult<HabitRow> {
     let id = new_id();
     conn.execute(
         "INSERT INTO habits (id, name, life_area_id, frequency_type, frequency_rule, start_date, status, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
@@ -918,8 +1017,12 @@ pub fn habit_create(state: tauri::State<AppState>, input: Value) -> CmdResult<Ha
 }
 
 #[tauri::command]
-pub fn habit_update(state: tauri::State<AppState>, id: String, patch: Value) -> CmdResult<()> {
+pub fn habit_create(state: tauri::State<Arc<AppState>>, input: Value) -> CmdResult<HabitRow> {
     let conn = lock(&state)?;
+    habit_create_impl(&conn, input)
+}
+
+pub(crate) fn habit_update_impl(conn: &Connection, id: String, patch: Value) -> CmdResult<()> {
     let obj = patch.as_object().ok_or("invalid patch object")?;
     let mut sets: Vec<String> = Vec::new();
     let mut vals: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -945,20 +1048,28 @@ pub fn habit_update(state: tauri::State<AppState>, id: String, patch: Value) -> 
 }
 
 #[tauri::command]
-pub fn habit_delete(state: tauri::State<AppState>, id: String) -> CmdResult<()> {
+pub fn habit_update(state: tauri::State<Arc<AppState>>, id: String, patch: Value) -> CmdResult<()> {
     let conn = lock(&state)?;
+    habit_update_impl(&conn, id, patch)
+}
+
+pub(crate) fn habit_delete_impl(conn: &Connection, id: String) -> CmdResult<()> {
     conn.execute("DELETE FROM habits WHERE id = ?1", params![id])
         .map_err(err)?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn habit_entries(
-    state: tauri::State<AppState>,
+pub fn habit_delete(state: tauri::State<Arc<AppState>>, id: String) -> CmdResult<()> {
+    let conn = lock(&state)?;
+    habit_delete_impl(&conn, id)
+}
+
+pub(crate) fn habit_entries_impl(
+    conn: &Connection,
     from: String,
     to: String,
 ) -> CmdResult<Vec<HabitEntryRow>> {
-    let conn = lock(&state)?;
     let mut stmt = conn
         .prepare("SELECT habit_id, date, completed, value FROM habit_entries WHERE date >= ?1 AND date <= ?2")
         .map_err(err)?;
@@ -977,20 +1088,40 @@ pub fn habit_entries(
 }
 
 #[tauri::command]
-pub fn habit_toggle(
-    state: tauri::State<AppState>,
+pub fn habit_entries(
+    state: tauri::State<Arc<AppState>>,
+    from: String,
+    to: String,
+) -> CmdResult<Vec<HabitEntryRow>> {
+    let conn = lock(&state)?;
+    habit_entries_impl(&conn, from, to)
+}
+
+pub(crate) fn habit_toggle_impl(
+    conn: &Connection,
     habit_id: String,
     date: String,
     completed: bool,
     value: Option<f64>,
 ) -> CmdResult<()> {
-    let conn = lock(&state)?;
     conn.execute(
         "INSERT INTO habit_entries (habit_id, date, completed, value) VALUES (?1,?2,?3,?4) ON CONFLICT (habit_id, date) DO UPDATE SET completed = excluded.completed, value = excluded.value",
         params![habit_id, date, if completed { 1 } else { 0 }, value],
     )
     .map_err(err)?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn habit_toggle(
+    state: tauri::State<Arc<AppState>>,
+    habit_id: String,
+    date: String,
+    completed: bool,
+    value: Option<f64>,
+) -> CmdResult<()> {
+    let conn = lock(&state)?;
+    habit_toggle_impl(&conn, habit_id, date, completed, value)
 }
 
 // ---------------------------------------------------------------- reviews
@@ -1008,12 +1139,10 @@ fn map_review(r: &rusqlite::Row<'_>) -> rusqlite::Result<ReviewRow> {
     })
 }
 
-#[tauri::command]
-pub fn review_list(
-    state: tauri::State<AppState>,
+pub(crate) fn review_list_impl(
+    conn: &Connection,
     review_type: Option<String>,
 ) -> CmdResult<Vec<ReviewRow>> {
-    let conn = lock(&state)?;
     let mut sql = String::from(
         "SELECT id, type, period_start, period_end, content, created_at, updated_at FROM reviews",
     );
@@ -1033,12 +1162,19 @@ pub fn review_list(
 }
 
 #[tauri::command]
-pub fn review_get(
-    state: tauri::State<AppState>,
+pub fn review_list(
+    state: tauri::State<Arc<AppState>>,
+    review_type: Option<String>,
+) -> CmdResult<Vec<ReviewRow>> {
+    let conn = lock(&state)?;
+    review_list_impl(&conn, review_type)
+}
+
+pub(crate) fn review_get_impl(
+    conn: &Connection,
     review_type: String,
     period_start: String,
 ) -> CmdResult<Option<ReviewRow>> {
-    let conn = lock(&state)?;
     let mut stmt = conn
         .prepare("SELECT id, type, period_start, period_end, content, created_at, updated_at FROM reviews WHERE type = ?1 AND period_start = ?2")
         .map_err(err)?;
@@ -1050,14 +1186,22 @@ pub fn review_get(
 }
 
 #[tauri::command]
-pub fn review_save(
-    state: tauri::State<AppState>,
+pub fn review_get(
+    state: tauri::State<Arc<AppState>>,
+    review_type: String,
+    period_start: String,
+) -> CmdResult<Option<ReviewRow>> {
+    let conn = lock(&state)?;
+    review_get_impl(&conn, review_type, period_start)
+}
+
+pub(crate) fn review_save_impl(
+    conn: &Connection,
     review_type: String,
     period_start: String,
     period_end: String,
     content: Value,
 ) -> CmdResult<()> {
-    let conn = lock(&state)?;
     let now = now_iso();
     let content_str = serde_json::to_string(&content).map_err(|e| e.to_string())?;
     conn.execute(
@@ -1069,8 +1213,18 @@ pub fn review_save(
 }
 
 #[tauri::command]
-pub fn review_stats(state: tauri::State<AppState>, from: String, to: String) -> CmdResult<Value> {
+pub fn review_save(
+    state: tauri::State<Arc<AppState>>,
+    review_type: String,
+    period_start: String,
+    period_end: String,
+    content: Value,
+) -> CmdResult<()> {
     let conn = lock(&state)?;
+    review_save_impl(&conn, review_type, period_start, period_end, content)
+}
+
+pub(crate) fn review_stats_impl(conn: &Connection, from: String, to: String) -> CmdResult<Value> {
     let today = today();
 
     let completed: Vec<Value> = {
@@ -1168,15 +1322,23 @@ pub fn review_stats(state: tauri::State<AppState>, from: String, to: String) -> 
     }))
 }
 
+#[tauri::command]
+pub fn review_stats(
+    state: tauri::State<Arc<AppState>>,
+    from: String,
+    to: String,
+) -> CmdResult<Value> {
+    let conn = lock(&state)?;
+    review_stats_impl(&conn, from, to)
+}
+
 // ---------------------------------------------------------------- notes
 
-#[tauri::command]
-pub fn note_get(
-    state: tauri::State<AppState>,
+pub(crate) fn note_get_impl(
+    conn: &Connection,
     entity_type: String,
     entity_id: String,
 ) -> CmdResult<Option<NoteRow>> {
-    let conn = lock(&state)?;
     let mut stmt = conn
         .prepare("SELECT id, entity_type, entity_id, content, updated_at FROM notes WHERE entity_type = ?1 AND entity_id = ?2")
         .map_err(err)?;
@@ -1196,13 +1358,21 @@ pub fn note_get(
 }
 
 #[tauri::command]
-pub fn note_save(
-    state: tauri::State<AppState>,
+pub fn note_get(
+    state: tauri::State<Arc<AppState>>,
+    entity_type: String,
+    entity_id: String,
+) -> CmdResult<Option<NoteRow>> {
+    let conn = lock(&state)?;
+    note_get_impl(&conn, entity_type, entity_id)
+}
+
+pub(crate) fn note_save_impl(
+    conn: &Connection,
     entity_type: String,
     entity_id: String,
     content: String,
 ) -> CmdResult<()> {
-    let conn = lock(&state)?;
     let now = now_iso();
     conn.execute(
         "INSERT INTO notes (id, entity_type, entity_id, content, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?5) ON CONFLICT (entity_type, entity_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",
@@ -1212,11 +1382,20 @@ pub fn note_save(
     Ok(())
 }
 
+#[tauri::command]
+pub fn note_save(
+    state: tauri::State<Arc<AppState>>,
+    entity_type: String,
+    entity_id: String,
+    content: String,
+) -> CmdResult<()> {
+    let conn = lock(&state)?;
+    note_save_impl(&conn, entity_type, entity_id, content)
+}
+
 // ---------------------------------------------------------------- search / misc
 
-#[tauri::command]
-pub fn search_all(state: tauri::State<AppState>, q: String) -> CmdResult<Value> {
-    let conn = lock(&state)?;
+pub(crate) fn search_all_impl(conn: &Connection, q: String) -> CmdResult<Value> {
     if q.trim().is_empty() {
         return Ok(json!({ "tasks": [], "projects": [], "goals": [], "areas": [], "notes": [] }));
     }
@@ -1278,6 +1457,12 @@ pub fn search_all(state: tauri::State<AppState>, q: String) -> CmdResult<Value> 
         "areas": areas,
         "notes": notes,
     }))
+}
+
+#[tauri::command]
+pub fn search_all(state: tauri::State<Arc<AppState>>, q: String) -> CmdResult<Value> {
+    let conn = lock(&state)?;
+    search_all_impl(&conn, q)
 }
 
 #[tauri::command]

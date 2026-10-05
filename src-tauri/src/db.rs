@@ -164,13 +164,15 @@ pub fn init(app: &AppHandle) -> Result<AppState, String> {
         .map_err(|e| e.to_string())?;
     conn.pragma_update(None, "foreign_keys", "ON")
         .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "busy_timeout", 5000)
+        .map_err(|e| e.to_string())?;
     migrate(&conn)?;
     Ok(AppState {
         conn: Mutex::new(conn),
     })
 }
 
-fn migrate(conn: &Connection) -> Result<(), String> {
+pub(crate) fn migrate(conn: &Connection) -> Result<(), String> {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|e| e.to_string())?;
@@ -183,8 +185,14 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     if version < 2 {
         // Projects get icon/color chips for the card-grid design.
         // Errors are ignored so this is safe if a column already exists.
-        let _ = conn.execute("ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT ''", []);
-        let _ = conn.execute("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT ''", []);
+        let _ = conn.execute(
+            "ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT ''",
+            [],
+        );
         conn.pragma_update(None, "user_version", 2)
             .map_err(|e| e.to_string())?;
     }

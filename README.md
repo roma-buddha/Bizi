@@ -18,19 +18,19 @@ The interface follows progressive disclosure: simple lists first, full detail in
 
 ## Sections
 
-| Section | What it does |
-| --- | --- |
-| **Today** | Tasks scheduled or due today, plus overdue and completed-today groups |
-| **Inbox** | Fast capture with no classification required; process later (convert to task/project/goal) |
-| **Areas** | Permanent life domains with Overview / Goals / Projects / Tasks / Notes tabs |
-| **Goals** | Desired outcomes with status, priority, dates, manual or automatic progress |
-| **Projects** | Initiatives with tasks; list and board views over the same data |
-| **To-Do** | All tasks with quick filters, attribute filters, sorting and search |
-| **Calendar** | Month view combining scheduled tasks, deadlines, projects and habits; drag to reschedule |
-| **Habits** | Repeated behaviors: today check-off, this-week grid, 12-week history |
-| **Reviews** | Weekly / monthly / annual reflection with computed stats and writing fields |
-| **Archive** | Archived goals, projects, tasks and areas, restorable |
-| **Settings** | Theme, data location, shortcuts |
+| Section      | What it does                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| **Today**    | Tasks scheduled or due today, plus overdue and completed-today groups                      |
+| **Inbox**    | Fast capture with no classification required; process later (convert to task/project/goal) |
+| **Areas**    | Permanent life domains with Overview / Goals / Projects / Tasks / Notes tabs               |
+| **Goals**    | Desired outcomes with status, priority, dates, manual or automatic progress                |
+| **Projects** | Initiatives with tasks; list and board views over the same data                            |
+| **To-Do**    | All tasks with quick filters, attribute filters, sorting and search                        |
+| **Calendar** | Month view combining scheduled tasks, deadlines, projects and habits; drag to reschedule   |
+| **Habits**   | Repeated behaviors: today check-off, this-week grid, 12-week history                       |
+| **Reviews**  | Weekly / monthly / annual reflection with computed stats and writing fields                |
+| **Archive**  | Archived goals, projects, tasks and areas, restorable                                      |
+| **Settings** | Theme, data location, shortcuts                                                            |
 
 Quick add (**Ctrl+N**) captures a task in seconds: title plus optional date, project and priority. The command palette (**Ctrl+K**) searches everything and jumps anywhere.
 
@@ -47,6 +47,23 @@ Tauri 2 / Rust for the native shell and validated SQLite access (rusqlite); Reac
 ## Data
 
 The database is created at first launch in the Windows app-data directory (`bizi.db`, WAL mode) with versioned migrations and realistic sample data (business/research/health examples) so every feature is testable immediately. Sample data only appears in an empty database.
+
+## Local AI bridge
+
+When the desktop app is running, it serves a loopback-only HTTP API on `127.0.0.1` (default port 1421) so external agents — Kimi Work, scripts, anything on this machine — can read and modify Bizi data with text or voice commands. The bridge dispatches to the same validated command functions as the UI; external processes should never write `bizi.db` directly.
+
+- `GET /health` — liveness probe (no auth)
+- `GET /schema` — machine-readable command catalog with `write` and `destructive` flags
+- `POST /invoke` — body `{ "cmd": string, "args": object }`; command names mirror the Tauri commands
+
+Every endpoint except `/health` requires `Authorization: Bearer <token>`. The token is generated on first run, stored next to the database (`bridge.token`), and shown under Settings → AI bridge, together with an enable toggle, port setting, and the activity log (`bridge.log`, last 50 entries). After each write the app emits a `bizi://data-changed` event, so open views refresh automatically.
+
+```powershell
+python scripts/bridge_client.py health
+python scripts/bridge_client.py task_create '{\"input\": {\"title\": \"from the bridge\"}}'
+```
+
+Agents should fetch `/schema` first and confirm with the user before calling commands flagged `destructive` (currently `*_delete`).
 
 ## Development
 

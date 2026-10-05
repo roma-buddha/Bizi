@@ -8,8 +8,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "../db";
 import type { Task as ApiTask } from "../models/types";
+import { isTauriRuntime } from "../runtime";
 
 export type ThemeSetting = "light" | "dark";
 
@@ -296,6 +298,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [detail, setDetail] = useState<TaskRef | null>(null);
 
   // Initial load from the backend (SQLite in the app, browser DB in dev).
+  const loadRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -348,9 +351,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       hydratedRef.current = true;
       setHydrated(true);
     };
+    loadRef.current = load;
     fire(load());
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // The local AI bridge runs inside the desktop app and emits this event after
+  // every write it performs; re-sync the store so external changes appear.
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    listen("bizi://data-changed", () => {
+      fire(loadRef.current());
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        // backend unreachable: local state stays
+      });
+    return () => {
+      unlisten?.();
     };
   }, []);
 

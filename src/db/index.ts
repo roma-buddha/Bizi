@@ -30,6 +30,14 @@ import type { HabitPatch } from "../models/types";
 import { createBrowserApi } from "./browser";
 
 export interface BiziApi {
+  bridge: {
+    status(): Promise<BridgeStatus>;
+    setEnabled(enabled: boolean): Promise<BridgeStatus>;
+    setPort(port: number): Promise<BridgeStatus>;
+    regenToken(): Promise<string>;
+    getToken(): Promise<string>;
+    log(): Promise<string[]>;
+  };
   area: {
     list(includeArchived?: boolean): Promise<LifeArea[]>;
     create(input: AreaInput): Promise<LifeArea>;
@@ -63,17 +71,31 @@ export interface BiziApi {
     update(id: string, patch: HabitPatch): Promise<void>;
     remove(id: string): Promise<void>;
     entries(from: string, to: string): Promise<HabitEntry[]>;
-    toggle(habitId: string, date: string, completed: boolean, value?: number | null): Promise<void>;
+    toggle(
+      habitId: string,
+      date: string,
+      completed: boolean,
+      value?: number | null,
+    ): Promise<void>;
   };
   review: {
     list(type?: ReviewType): Promise<Review[]>;
     get(type: ReviewType, periodStart: string): Promise<Review | null>;
-    save(type: ReviewType, periodStart: string, periodEnd: string, content: ReviewContent): Promise<void>;
+    save(
+      type: ReviewType,
+      periodStart: string,
+      periodEnd: string,
+      content: ReviewContent,
+    ): Promise<void>;
     stats(from: string, to: string): Promise<ReviewStats>;
   };
   note: {
     get(entityType: EntityType, entityId: string): Promise<Note | null>;
-    save(entityType: EntityType, entityId: string, content: string): Promise<void>;
+    save(
+      entityType: EntityType,
+      entityId: string,
+      content: string,
+    ): Promise<void>;
   };
   search: {
     all(q: string): Promise<SearchResults>;
@@ -87,9 +109,26 @@ export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export interface BridgeStatus {
+  enabled: boolean;
+  port: number;
+  actualPort: number | null;
+  running: boolean;
+}
+
 const tauriApi: BiziApi = {
+  bridge: {
+    status: () => invoke<BridgeStatus>("bridge_status"),
+    setEnabled: (enabled) =>
+      invoke<BridgeStatus>("bridge_set_enabled", { enabled }),
+    setPort: (port) => invoke<BridgeStatus>("bridge_set_port", { port }),
+    regenToken: () => invoke<string>("bridge_regen_token"),
+    getToken: () => invoke<string>("bridge_get_token"),
+    log: () => invoke<string[]>("bridge_log"),
+  },
   area: {
-    list: (includeArchived) => invoke<LifeArea[]>("area_list", { includeArchived }),
+    list: (includeArchived) =>
+      invoke<LifeArea[]>("area_list", { includeArchived }),
     create: (input) => invoke<LifeArea>("area_create", { input }),
     update: (id, patch) => invoke<void>("area_update", { id, patch }),
     remove: (id) => invoke<void>("area_delete", { id }),
@@ -101,7 +140,8 @@ const tauriApi: BiziApi = {
     remove: (id) => invoke<void>("goal_delete", { id }),
   },
   project: {
-    list: (filter) => invoke<Project[]>("project_list", { filter: filter ?? {} }),
+    list: (filter) =>
+      invoke<Project[]>("project_list", { filter: filter ?? {} }),
     create: (input) => invoke<Project>("project_create", { input }),
     update: (id, patch) => invoke<void>("project_update", { id, patch }),
     remove: (id) => invoke<void>("project_delete", { id }),
@@ -113,7 +153,8 @@ const tauriApi: BiziApi = {
     create: (input) => invoke<Task>("task_create", { input }),
     update: (id, patch) => invoke<void>("task_update", { id, patch }),
     remove: (id) => invoke<void>("task_delete", { id }),
-    setComplete: (id, completed) => invoke<void>("task_set_complete", { id, completed }),
+    setComplete: (id, completed) =>
+      invoke<void>("task_set_complete", { id, completed }),
   },
   habit: {
     list: () => invoke<Habit[]>("habit_list"),
@@ -129,11 +170,17 @@ const tauriApi: BiziApi = {
     get: (type, periodStart) =>
       invoke<Review | null>("review_get", { reviewType: type, periodStart }),
     save: (type, periodStart, periodEnd, content) =>
-      invoke<void>("review_save", { reviewType: type, periodStart, periodEnd, content }),
+      invoke<void>("review_save", {
+        reviewType: type,
+        periodStart,
+        periodEnd,
+        content,
+      }),
     stats: (from, to) => invoke<ReviewStats>("review_stats", { from, to }),
   },
   note: {
-    get: (entityType, entityId) => invoke<Note | null>("note_get", { entityType, entityId }),
+    get: (entityType, entityId) =>
+      invoke<Note | null>("note_get", { entityType, entityId }),
     save: (entityType, entityId, content) =>
       invoke<void>("note_save", { entityType, entityId, content }),
   },

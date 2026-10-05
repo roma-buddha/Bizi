@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::Arc;
 use tauri::Manager;
 
+mod bridge;
 mod commands;
 mod db;
 mod models;
@@ -16,7 +18,14 @@ fn main() {
         }))
         .setup(|app| {
             let state = db::init(&app.handle())?;
-            app.manage(state);
+            let shared = Arc::new(state);
+            app.manage(shared);
+            let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            let bridge_state = bridge::Bridge::load(&data_dir)?;
+            app.manage(bridge_state);
+            // A busy port must not prevent the app from starting; status is
+            // surfaced in Settings.
+            let _ = bridge::start(&app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -53,6 +62,12 @@ fn main() {
             commands::note_save,
             commands::search_all,
             commands::app_data_dir,
+            bridge::bridge_status,
+            bridge::bridge_set_enabled,
+            bridge::bridge_set_port,
+            bridge::bridge_regen_token,
+            bridge::bridge_get_token,
+            bridge::bridge_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Bizi");
